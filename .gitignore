@@ -1,0 +1,25 @@
+.gradle/
+**/build/
+local.properties
+.idea/
+*.iml
+.DS_Store
+*.jks
+*.keystore
+*.p12
+*.pem
+*.properties.local
+.env.local
+.env.*.local
+private/
+artifacts/
+tools/
+.kotlin/
+.claude/
+*.apk
+*.aab
+*.idsig
+*.hprof
+captures/
+# Журнал проверок — локальный рабочий файл с цитатами запросов.
+docs/VALIDATION.md

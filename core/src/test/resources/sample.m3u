@@ -1,0 +1,8 @@
+#EXTM3U catchup="flussonic" url-tvg="https://example.org/sample.xml"
+#EXTINF:-1 tvg-id="news" tvg-name="Новости" group-title="Информация" tvg-rec="5",Новости HD
+https://example.org/news/video.m3u8
+#EXTINF:-1 tvg-id="news" group-title="Информация",Новости SD
+https://example.org/news-sd/video.m3u8
+#EXTINF:-1 tvg-id="culture" catchup="append" catchup-days="3" catchup-source="?utc={utc}&duration={duration}",Культура
+#EXTGRP:Познавательные
+https://example.org/culture/live.m3u8

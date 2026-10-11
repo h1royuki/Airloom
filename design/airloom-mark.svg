@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108" viewBox="0 0 108 108" style="color:var(--airloom-accent,#CDC0FF)" role="img" aria-labelledby="airloom-title">
+  <title id="airloom-title">Airloom</title>
+  <path fill="currentColor" d="M48,25Q54,14 60,25L88,77Q93,89 80,89L66,89L54,66L42,89L28,89Q15,89 20,77Z"/>
+  <path fill="#000" fill-opacity="0.2" d="M54,44L72,78Q77,89 65,89L43,89Q31,89 36,78Z"/>
+</svg>

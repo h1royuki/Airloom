@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ui_choose_channel" formatted="false">Выберите канал</string>
+    <string name="ui_open_channels" formatted="false">Открыть каналы</string>
+    <string name="ui_playback_failed" formatted="false">Не удалось начать просмотр</string>
+    <string name="ui_retry" formatted="false">Повторить</string>
+    <string name="ui_return_channels" formatted="false">К каналам</string>
+    <string name="ui_player_channels" formatted="false">Каналы</string>
+    <string name="ui_close" formatted="false">Закрыть</string>
+    <string name="ui_settings" formatted="false">Настройки</string>
+    <string name="ui_epg" formatted="false">Телепрограмма</string>
+    <string name="ui_offset_decrease" formatted="false">−30</string>
+    <string name="ui_offset_increase" formatted="false">+30</string>
+    <string name="ui_reset" formatted="false">Сбросить</string>
+    <string name="ui_appearance_title" formatted="false">На ваш вкус</string>
+    <string name="ui_theme" formatted="false">Тема</string>
+    <string name="ui_accent" formatted="false">Акцент</string>
+    <string name="ui_text_size" formatted="false">Размер текста</string>
+    <string name="ui_channel_density" formatted="false">Плотность списка каналов</string>
+    <string name="ui_startup_screen" formatted="false">Стартовый экран</string>
+    <string name="ui_startup_explicit_playback" formatted="false">При запуске видео ждёт вашего нажатия OK.</string>
+    <string name="ui_channel_management" formatted="false">Управление каналами</string>
+    <string name="ui_find_channel" formatted="false">Найти канал</string>
+    <string name="ui_about_title" formatted="false">Airloom</string>
+    <string name="ui_about_version" formatted="false">Android TV</string>
+    <string name="ui_about_description" formatted="false">Приложение работает с IPTV.ONLINE. Для управления достаточно пульта. Видео запускается после вашего выбора.</string>
+    <string name="ui_about_formats" formatted="false">Поддерживаются M3U, XMLTV, HLS, DASH и MPEG-TS. Возможности архива и кодеков зависят от провайдера и телевизора.</string>
+    <string name="ui_cancel" formatted="false">Отменить</string>
+    <string name="ui_back" formatted="false">Назад</string>
+    <string name="ui_search_query" formatted="false">Название канала или передачи</string>
+    <string name="ui_search_placeholder" formatted="false">Канал или передача</string>
+    <string name="ui_search_prompt" formatted="false">Что вас интересует?</string>
+    <string name="ui_search_no_results" formatted="false">Ничего не найдено</string>
+    <string name="ui_playlists" formatted="false">Плейлисты</string>
+    <string name="ui_appearance" formatted="false">Внешний вид</string>
+    <string name="ui_about" formatted="false">О приложении</string>
+    <string name="ui_theme_dark" formatted="false">Тёмная</string>
+    <string name="ui_theme_light" formatted="false">Светлая</string>
+    <string name="ui_theme_system" formatted="false">Как на ТВ</string>
+    <string name="ui_accent_lavender" formatted="false">Лаванда</string>
+    <string name="ui_accent_mint" formatted="false">Мята</string>
+    <string name="ui_accent_sky" formatted="false">Небо</string>
+    <string name="ui_accent_peach" formatted="false">Персик</string>
+    <string name="ui_text_small" formatted="false">Небольшой</string>
+    <string name="ui_text_normal" formatted="false">Обычный</string>
+    <string name="ui_text_large" formatted="false">Крупный</string>
+    <string name="ui_density_compact" formatted="false">Компактная</string>
+    <string name="ui_density_normal" formatted="false">Обычная</string>
+    <string name="ui_density_spacious" formatted="false">Свободная</string>
+    <string name="ui_empty_symbol" formatted="false">◇</string>
+    <string name="ui_favourites" formatted="false">Избранное</string>
+    <string name="ui_all_channels" formatted="false">Все каналы</string>
+    <string name="ui_search" formatted="false">Поиск</string>
+    <string name="ui_wizard_brand" formatted="false">◈  Airloom</string>
+    <string name="ui_wizard_tagline" formatted="false">Ваше телевидение.\nВаши правила.</string>
+    <string name="ui_wizard_platform" formatted="false">ANDROID TV · БЕЗ ЛИШНЕГО</string>
+    <string name="ui_wizard_welcome" formatted="false">Устраивайтесь поудобнее</string>
+    <string name="ui_wizard_channels_feature" formatted="false">Каналы под рукой</string>
+    <string name="ui_wizard_order_feature" formatted="false">Всё на своих местах</string>
+    <string name="ui_wizard_remote_feature" formatted="false">Управляйте с дивана</string>
+    <string name="ui_wizard_provider_hint" formatted="false">Подключите IPTV.ONLINE своим ключом. Airloom не предоставляет телеканалы.</string>
+    <string name="ui_wizard_start" formatted="false">Начать</string>
+    <string name="ui_wizard_archive_hint" formatted="false">Архив заявлен провайдером. Доступность записи проверяется при просмотре.</string>
+    <string name="ui_wizard_test_playback" formatted="false">Проверить воспроизведение</string>
+    <string name="ui_correct" formatted="false">Исправить</string>
+    <string name="ui_next" formatted="false">Далее</string>
+    <string name="ui_wizard_skip_epg_hint" formatted="false">Можно продолжить без телепрограммы и добавить её позднее в настройках.</string>
+    <string name="ui_wizard_appearance" formatted="false">Сделайте удобнее</string>
+    <string name="ui_wizard_density" formatted="false">Плотность списка каналов</string>
+    <string name="ui_wizard_preview" formatted="false">ПРЕДПРОСМОТР</string>
+    <string name="ui_wizard_sample_title" formatted="false">Мир    ·    Дикая природа</string>
+    <string name="ui_wizard_sample_time" formatted="false">18:00 — 19:00</string>
+    <string name="ui_wizard_sample_description" formatted="false">Путешествие по заповедным уголкам планеты.</string>
+    <string name="ui_wizard_checkmark" formatted="false">✓</string>
+    <string name="ui_wizard_complete" formatted="false">Приятного просмотра</string>
+    <string name="ui_remote_controls_hint" formatted="false">Стрелки — выбор  ·  OK — смотреть  ·  Назад — вернуться</string>
+    <string name="ui_wizard_explicit_play_hint" formatted="false">Канал начнёт играть только после вашего выбора.</string>
+    <string name="ui_return_settings" formatted="false">Вернуться в настройки</string>
+    <string name="ui_operation_failed" formatted="false">Не удалось выполнить действие</string>
+    <string name="ui_programme_future" formatted="false">Передача ещё не началась</string>
+    <string name="ui_startup_last_channel">Последний канал · OK</string>
+    <string name="ui_idle_play_hint">Нажмите OK, чтобы начать просмотр</string>
+    <string name="ui_idle_watch">Смотреть</string>
+    <string name="ui_entry_edit_hint">OK — изменить</string>
+    <string name="ui_entry_done_hint">Назад — закончить</string>
+    <string name="ui_player_format">Формат: %1$s</string>
+    <string name="ui_player_fit">Вписать</string>
+    <string name="ui_player_stretch">Растянуть</string>
+    <string name="ui_player_zoom">Заполнить</string>
+    <string name="ui_recent_channels">Последние</string>
+    <string name="ui_loading">Загрузка</string>
+    <string name="ui_loading_list">Загрузка списка</string>
+    <string name="ui_loading_video">Загрузка видео</string>
+    <string name="ui_saving">Сохранение…</string>
+    <string name="ui_channels_load_failed">Не удалось загрузить каналы</string>
+    <string name="ui_categories_load_failed">Не удалось загрузить категории</string>
+    <string name="ui_epg_load_failed">Не удалось загрузить телепрограмму</string>
+    <string name="ui_search_failed">Не удалось выполнить поиск</string>
+    <string name="ui_player_pause">Пауза</string>
+    <string name="ui_player_archive">Архив</string>
+    <string name="ui_player_live">Прямой эфир</string>
+    <string name="ui_player_position">Позиция воспроизведения</string>
+    <string name="ui_seek_back">−30 с</string>
+    <string name="ui_seek_forward">+30 с</string>
+    <string name="ui_return_live">К эфиру</string>
+    <string name="ui_player_all_channels">Все</string>
+    <string name="ui_player_sections">Разделы</string>
+</resources>

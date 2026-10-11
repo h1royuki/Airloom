@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE tv SYSTEM "xmltv.dtd">
+<tv generator-info-name="Airloom synthetic test fixture">
+  <channel id="news"><display-name>Новости</display-name></channel>
+  <channel id="culture"><display-name>Культура</display-name></channel>
+  <programme channel="news" start="20260929180000 +0300" stop="20260929183000 +0300">
+    <title lang="ru">Новости</title><desc lang="ru">Обзор событий дня.</desc><category>Информация</category>
+  </programme>
+  <programme channel="culture" start="20260929180000 +0300" stop="20260929190000 +0300">
+    <title lang="ru">Мир искусства</title><desc lang="ru">История одной картины.</desc><category>Культура</category>
+  </programme>
+</tv>
