@@ -9,4 +9,10 @@ object RecentChannels {
         val byId = channels.associateBy { it.id }
         return normalize(ids).mapNotNull(byId::get)
     }
+    /** Keeps the rows already shown in place: channels new to the list go on top, removed ones drop out. */
+    fun keepingOrder(channels: List<Channel>, shown: List<String>): List<Channel> {
+        val position = shown.withIndex().associate { it.value to it.index }
+        val (known, added) = channels.partition { it.id in position }
+        return added + known.sortedBy { position.getValue(it.id) }
+    }
 }

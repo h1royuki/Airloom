@@ -22,4 +22,11 @@ class RecentChannelsTest {
         val b = Channel("b", "test", "Канал Б", "fixture://b")
         assertEquals(listOf(b, a), RecentChannels.available(listOf("removed", "b", "a"), listOf(a, b)))
     }
+    @Test fun keepingOrderLeavesShownRowsInPlace() {
+        val (a, b, c, d) = listOf("a", "b", "c", "d").map { Channel(it, "test", "Канал $it", "fixture://$it") }
+        // Playing b moved it to the front of the history; the rows on screen stay where they were.
+        assertEquals(listOf(a, b, c), RecentChannels.keepingOrder(listOf(b, a, c), listOf("a", "b", "c")))
+        // A channel that was not on screen goes on top; one that left the history drops out.
+        assertEquals(listOf(d, a, c), RecentChannels.keepingOrder(listOf(d, c, a), listOf("a", "b", "c")))
+    }
 }

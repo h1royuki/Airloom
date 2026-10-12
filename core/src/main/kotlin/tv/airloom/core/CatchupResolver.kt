@@ -9,6 +9,11 @@ import java.util.Locale
 
 /** Provider archive URLs are separate from a player's live seek window. Times are milliseconds. */
 object CatchupResolver {
+    // Resolved for every past programme of a day on the main thread, so the patterns are built once.
+    private val unresolvedPlaceholder = Regex("\\{[^}]+\\}")
+    private val dateFields = listOf("Y" to "yyyy", "m" to "MM", "d" to "dd", "H" to "HH", "M" to "mm", "S" to "ss")
+        .map { (key, pattern) -> "{$key}" to DateTimeFormatter.ofPattern(pattern).withZone(ZoneOffset.UTC) }
+
     fun resolve(request: PlaybackRequest, now: Long = System.currentTimeMillis()): CatchupResult {
         val channel = request.channel
         val headers = buildMap {
@@ -58,10 +63,8 @@ object CatchupResolver {
         )
         placeholders.forEach { (key, value) -> resolved = resolved.replace("\${$key}", value).replace("{$key}", value) }
         val instant = Instant.ofEpochSecond(start)
-        mapOf("Y" to "yyyy", "m" to "MM", "d" to "dd", "H" to "HH", "M" to "mm", "S" to "ss").forEach { (key, pattern) ->
-            resolved = resolved.replace("{$key}", DateTimeFormatter.ofPattern(pattern).withZone(ZoneOffset.UTC).format(instant))
-        }
-        if (Regex("\\{[^}]+\\}").containsMatchIn(resolved)) return unavailable("В адресе архива есть неподдерживаемые параметры")
+        dateFields.forEach { (token, formatter) -> if (token in resolved) resolved = resolved.replace(token, formatter.format(instant)) }
+        if (unresolvedPlaceholder.containsMatchIn(resolved)) return unavailable("В адресе архива есть неподдерживаемые параметры")
         if (template.contains("catchup-id") && programme.catchupId.isBlank()) return unavailable("В телепрограмме отсутствует идентификатор архива")
         val uri = runCatching { liveUri.resolve(resolved) }.getOrNull() ?: return unavailable("Некорректный адрес архива")
         if (uri.scheme?.lowercase(Locale.ROOT) !in listOf("http", "https") || uri.rawAuthority.isNullOrBlank()) return unavailable("Некорректный адрес архива")

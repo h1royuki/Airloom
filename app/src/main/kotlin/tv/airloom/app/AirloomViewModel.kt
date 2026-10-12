@@ -44,7 +44,6 @@ class AirloomViewModel @Inject constructor(
     private val settingsMutex = Mutex()
     private val onboardingMutex = Mutex()
     private var operation: Job? = null
-    private val operationGeneration = java.util.concurrent.atomic.AtomicLong(0)
     private var epgSearch: Job? = null
     private var hydrated = false
     private var pendingStartup = true
@@ -57,6 +56,8 @@ class AirloomViewModel @Inject constructor(
     private val settingsWrites = linkedMapOf<Long, (AppSettings) -> AppSettings>()
     private val onboardingWrites = linkedMapOf<Long, (OnboardingState) -> OnboardingState>()
     private var channelRebuild: Job? = null
+    /** The published recent list, while the published list is the recent section. */
+    private var shownRecent: List<String>? = null
     @Volatile private var operationCommitted = false
     private var cancellationRequested = false
 
@@ -112,11 +113,15 @@ class AirloomViewModel @Inject constructor(
                 if (scope == state.value.channelListScope()) {
                     if (!state.value.moveSaving && state.value.movingChannelId != null && preferences != state.value.channelListPreferences) finishMove(false)
                     val snapshot = state.value.copy(channelPreferenceScope = scope, channelListPreferences = preferences)
-                    val built = withContext(runtime.computation) { buildChannelList(snapshot) }
+                    val shown = shownRecent
+                    val built = withContext(runtime.computation) { buildChannelList(snapshot, shown) }
+                    var published = false
                     mutableState.update { current ->
-                        if (current.channelListScope() != scope) current else current.copy(channelPreferenceScope = scope,
+                        published = current.channelListScope() == scope
+                        if (!published) current else current.copy(channelPreferenceScope = scope,
                             channelListPreferences = preferences, channels = built.first.sameAs(current.channels), focusedChannel = built.second)
                     }
+                    if (published) publishedChannels(snapshot, built.first)
                     rebuildChannels()
                 }
             }
@@ -223,13 +228,15 @@ class AirloomViewModel @Inject constructor(
                 repository.epgSources, state.map { it.now / 60000 }.distinctUntilChanged()) { text, scope, _, _ -> text to scope }
                 .collectLatest { (text, scope) ->
                     val now = state.value.now
-                    val hiddenGroups = scope.categories.filter { it.hidden }.map { it.playlistId to it.name }.toSet()
-                    val allowed = scope.channels.filter { !it.hidden && (it.playlistId to it.group) !in hiddenGroups }
-                    val allowedIds = allowed.map { it.id }.toSet()
                     try {
                         if (text == null) {
                             mutableState.update { it.copy(searchLive = emptyList(), searchArchive = emptyList(), searchLoad = ContentLoad()) }
                             return@collectLatest
+                        }
+                        val (allowed, allowedIds) = withContext(runtime.computation) {
+                            val hiddenGroups = scope.categories.filter { it.hidden }.map { it.playlistId to it.name }.toSet()
+                            val allowed = scope.channels.filter { !it.hidden && (it.playlistId to it.group) !in hiddenGroups }
+                            allowed to allowed.mapTo(HashSet()) { it.id }
                         }
                         if (text.isBlank()) {
                             // An empty query offers the channels watched last, with what is on them now.
@@ -297,11 +304,15 @@ class AirloomViewModel @Inject constructor(
         }
     }
 
-    private fun buildChannelList(s: UiState): Triple<List<Channel>, Channel?, Boolean> {
+    private fun buildChannelList(s: UiState, shownRecent: List<String>?): Triple<List<Channel>, Channel?, Boolean> {
         val hidden = s.categories.filter { it.hidden }.map { it.playlistId to it.name }.toSet()
         var channels = s.allChannels.filter { !it.hidden && (it.playlistId to it.group) !in hidden }
         channels = when (val selection = s.channelSelection) {
-            ChannelSelection.Recent -> RecentChannels.available(s.settings.recentChannelIds, channels)
+            // Playing a channel moves it to the front of the history. In the player, CH+/CH− and the channel
+            // panel step through this list, so it keeps its order there and is re-sorted once the player closes.
+            ChannelSelection.Recent -> RecentChannels.available(s.settings.recentChannelIds, channels).let {
+                if (s.screen == Screen.PLAYER && shownRecent != null) RecentChannels.keepingOrder(it, shownRecent) else it
+            }
             ChannelSelection.Favourites -> channels.filter { it.favourite }
             ChannelSelection.All -> channels
             is ChannelSelection.Category -> channels.filter { it.group == selection.name && (selection.playlistId.isBlank() || it.playlistId == selection.playlistId) }
@@ -318,6 +329,10 @@ class AirloomViewModel @Inject constructor(
         return Triple(channels, focused, moveValid)
     }
 
+    private fun publishedChannels(snapshot: UiState, channels: List<Channel>) {
+        shownRecent = if (snapshot.channelSelection == ChannelSelection.Recent) channels.map { it.id } else null
+    }
+
     /** An unchanged rebuild keeps the published list instance, so the channel list is not redrawn. */
     private fun List<Channel>.sameAs(published: List<Channel>): List<Channel> = if (this == published) published else this
 
@@ -325,13 +340,15 @@ class AirloomViewModel @Inject constructor(
         channelRebuild?.cancel()
         channelRebuild = viewModelScope.launch {
             val s = state.value
-            val built = withContext(runtime.computation) { buildChannelList(s) }
+            val shown = shownRecent
+            val built = withContext(runtime.computation) { buildChannelList(s, shown) }
             mutableState.update { current -> current.copy(channels = built.first.sameAs(current.channels),
                 focusedChannel = if (current.screen == Screen.PLAYER && current.player.request == null) current.focusedChannel
                     else if (current.focusedChannel != s.focusedChannel) built.first.firstOrNull { it.id == current.focusedChannel?.id } ?: built.second
                     else built.second,
                 movingChannelId = current.movingChannelId.takeIf { built.third },
                 movingIds = current.movingIds.takeIf { built.third }.orEmpty()) }
+            publishedChannels(s, built.first)
             if (visibleIds.value.isEmpty()) visibleIds.value = built.first.take(10).map { it.id }
             maybeStartup()
         }
@@ -387,8 +404,10 @@ class AirloomViewModel @Inject constructor(
         if (screen == Screen.PLAYER && state.value.player.channel == null) return
         lastExitBackAtMs = 0L
         if (screen != Screen.PLAYER && state.value.screen == Screen.PLAYER) playback.stop()
+        val leavingPlayer = screen != Screen.PLAYER && state.value.screen == Screen.PLAYER
         mutableState.update { it.copy(screen = screen, quickChannels = if (screen == Screen.PLAYER) it.quickChannels else false,
             error = null, message = it.message.takeUnless { message -> message == EXIT_HINT }, detailChannel = null, detailProgramme = null) }
+        if (leavingPlayer) rebuildChannels()
     }
     override fun back() {
         val s = state.value
@@ -754,20 +773,24 @@ class AirloomViewModel @Inject constructor(
     override fun nextChannel(delta: Int) {
         val channels = state.value.channels
         if (channels.isEmpty()) return
-        val current = channels.indexOfFirst { it.id == state.value.player.channel?.id }.coerceAtLeast(0)
-        play(channels[(current + delta).mod(channels.size)])
+        val current = channels.indexOfFirst { it.id == state.value.player.channel?.id }
+        // A channel from outside the section (opened from search) steps to the section's first or last channel.
+        val next = if (current < 0) (if (delta > 0) delta - 1 else delta) else current + delta
+        play(channels[next.mod(channels.size)])
     }
     fun background() {
         previews.stop()
         playback.stop()
+        val leavingPlayer = state.value.screen == Screen.PLAYER
         mutableState.update { it.copy(player = playback.state.value, quickChannels = false, screen = if (it.screen == Screen.PLAYER) returningScreen else it.screen) }
+        if (leavingPlayer) rebuildChannels()
     }
     fun showError(message: String) { mutableState.update { it.copy(error = message) } }
     private fun notice(message: String) { mutableState.update { it.copy(message = message) } }
     private fun launchMutation(block: suspend () -> Unit) { viewModelScope.launch { try { block() } catch (e: CancellationException) { throw e } catch (e: Exception) { showError(errorText(e)) } } }
     private fun runOperation(block: suspend ((ImportProgress) -> Unit) -> Unit) {
+        // busy is cleared only when the running operation finishes, so operations never overlap.
         if (state.value.busy) return
-        val generation = operationGeneration.incrementAndGet()
         operationCommitted = false
         cancellationRequested = false
         mutableState.update { it.copy(busy = true, error = null, message = null, progress = ImportProgress("Подключение…")) }
@@ -775,18 +798,16 @@ class AirloomViewModel @Inject constructor(
             try {
                 block { progress ->
                     if (progress.committed) operationCommitted = true
-                    if (generation == operationGeneration.get()) mutableState.update { it.copy(progress = progress) }
+                    mutableState.update { it.copy(progress = progress) }
                 }
             } catch (e: CancellationException) { throw e }
-            catch (e: Exception) { if (generation == operationGeneration.get()) showError(errorText(e)) }
+            catch (e: Exception) { showError(errorText(e)) }
             finally {
-                if (generation == operationGeneration.get()) {
-                    operation = null
-                    mutableState.update { it.copy(busy = false, message = if (cancellationRequested) {
-                        if (operationCommitted) "Изменения сохранены" else "Импорт отменён. Последняя рабочая версия сохранена."
-                    } else it.message) }
-                    if (cancellationRequested && !operationCommitted && state.value.screen == Screen.ONBOARDING && state.value.onboarding.step == 2 && state.value.importResult == null) updateOnboarding(state.value.onboarding.copy(step = 1))
-                }
+                operation = null
+                mutableState.update { it.copy(busy = false, message = if (cancellationRequested) {
+                    if (operationCommitted) "Изменения сохранены" else "Импорт отменён. Последняя рабочая версия сохранена."
+                } else it.message) }
+                if (cancellationRequested && !operationCommitted && state.value.screen == Screen.ONBOARDING && state.value.onboarding.step == 2 && state.value.importResult == null) updateOnboarding(state.value.onboarding.copy(step = 1))
             }
         }
     }
