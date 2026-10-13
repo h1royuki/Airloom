@@ -45,6 +45,7 @@ interface AirloomDao {
     @Query("UPDATE channels SET active = 0 WHERE playlistId = :id") suspend fun deactivate(id: String)
     @Query("SELECT * FROM channel_preferences") fun preferences(): Flow<List<PreferenceEntity>>
     @Query("SELECT * FROM channel_preferences WHERE channelId = :id") suspend fun preference(id: String): PreferenceEntity?
+    @Query("SELECT * FROM channel_preferences") suspend fun allPreferences(): List<PreferenceEntity>
     @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun initializePreferences(values: List<PreferenceEntity>)
     @Upsert suspend fun putPreference(value: PreferenceEntity)
     @Query("SELECT * FROM category_preferences") fun categoryPreferences(): Flow<List<CategoryPreferenceEntity>>
@@ -55,7 +56,10 @@ interface AirloomDao {
     fun listPreferences(playlistId: String, kind: String, category: String): Flow<List<ChannelListPreferenceEntity>>
     @Query("SELECT * FROM channel_list_preferences WHERE playlistId = :playlistId AND kind = :kind AND category = :category AND channelId = :channelId")
     suspend fun listPreference(playlistId: String, kind: String, category: String, channelId: String): ChannelListPreferenceEntity?
+    @Query("SELECT * FROM channel_list_preferences WHERE playlistId = :playlistId AND kind = :kind AND category = :category")
+    suspend fun currentListPreferences(playlistId: String, kind: String, category: String): List<ChannelListPreferenceEntity>
     @Upsert suspend fun putListPreference(value: ChannelListPreferenceEntity)
+    @Upsert suspend fun putListPreferences(values: List<ChannelListPreferenceEntity>)
     @Query("DELETE FROM channel_list_preferences WHERE playlistId = :id") suspend fun deleteListPreferences(id: String)
     @Query("SELECT * FROM epg_sources") fun epgSources(): Flow<List<EpgSourceEntity>>
     @Query("SELECT * FROM epg_sources") suspend fun allEpgSources(): List<EpgSourceEntity>
@@ -69,7 +73,7 @@ interface AirloomDao {
     @Query("UPDATE epg_channels SET icon = :icon WHERE sourceId = :sourceId AND generation = :generation AND id = :id") suspend fun setEpgChannelIcon(sourceId: String, generation: String, id: String, icon: String)
     @Query("SELECT e.* FROM epg_channels e JOIN epg_sources s ON s.id = e.sourceId AND s.generation = e.generation") fun currentEpgChannels(): Flow<List<EpgChannelEntity>>
     @Query("SELECT e.* FROM epg_channels e JOIN epg_sources s ON s.id = e.sourceId AND s.generation = e.generation WHERE s.playlistId = :playlistId") suspend fun epgChannels(playlistId: String): List<EpgChannelEntity>
-    @Query("SELECT e.* FROM epg_channels e JOIN epg_sources s ON s.id = e.sourceId AND s.generation = e.generation WHERE e.name LIKE :query OR e.id LIKE :query LIMIT 100") suspend fun findEpg(query: String): List<EpgChannelEntity>
+    @Query("SELECT e.* FROM epg_channels e JOIN epg_sources s ON s.id = e.sourceId AND s.generation = e.generation WHERE e.name GLOB :pattern OR e.id GLOB :pattern LIMIT 100") suspend fun findEpg(pattern: String): List<EpgChannelEntity>
     @Query("SELECT * FROM bindings") fun bindings(): Flow<List<BindingEntity>>
     @Query("SELECT * FROM bindings") suspend fun allBindings(): List<BindingEntity>
     @Upsert suspend fun putBindings(values: List<BindingEntity>)

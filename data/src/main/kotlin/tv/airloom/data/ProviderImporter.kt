@@ -62,7 +62,9 @@ internal class ProviderImporter(
             dao.discardAbandonedEpgChannels()
             val previous = dao.epgSource(source.id)
             val now = runtime.now()
-            val earliest = now - history.coerceIn(0, 365) * DAY
+            // Without any archive the schedule still needs the earlier part of today, and programme search looks
+            // back at least two days, so the window never starts later than that.
+            val earliest = now - history.coerceIn(MIN_HISTORY_DAYS, 365) * DAY
             val latest = now + 7 * DAY
             val channels = ArrayList<EpgChannelEntity>(256)
             val programmes = ArrayList<ProgrammeEntity>(EPG_BATCH)
@@ -76,16 +78,14 @@ internal class ProviderImporter(
                     channels += EpgChannelEntity(source.id, generation, c.id, c.name, resolveEpgIcon(c.icon, source.location))
                     channelCount++
                     if (channels.size >= 256) { dao.putEpgChannels(channels); channels.clear() }
-                }, onProgramme = { programme ->
+                }, accept = { start, end -> job.ensureActive(); end > earliest && start < latest }, onProgramme = { programme ->
                     job.ensureActive()
-                    if (programme.end > earliest && programme.start < latest) {
-                        programmes += programme.entity(generation)
-                        count++
-                        if (programmes.size >= EPG_BATCH) {
-                            dao.putProgrammes(programmes)
-                            programmes.clear()
-                            progress(ImportProgress("Обработка телепрограммы", count))
-                        }
+                    programmes += programme.entity(generation)
+                    count++
+                    if (programmes.size >= EPG_BATCH) {
+                        dao.putProgrammes(programmes)
+                        programmes.clear()
+                        progress(ImportProgress("Обработка телепрограммы", count))
                     }
                 })
             }
@@ -348,5 +348,5 @@ internal class ProviderImporter(
         else -> AirloomFailure(if (epg) FailureKind.EPG else FailureKind.PLAYLIST)
     }
     private class HttpImportException(val code: Int) : IOException()
-    private companion object { const val HOUR = 3_600_000L; const val DAY = 24 * HOUR; const val EPG_BATCH = 6_000; const val PROVIDER_PLAYLIST_ID = "iptv-online"; const val PROVIDER_EPG_ID = "iptv-online-epg" }
+    private companion object { const val HOUR = 3_600_000L; const val DAY = 24 * HOUR; const val MIN_HISTORY_DAYS = 2; const val EPG_BATCH = 6_000; const val PROVIDER_PLAYLIST_ID = "iptv-online"; const val PROVIDER_EPG_ID = "iptv-online-epg" }
 }

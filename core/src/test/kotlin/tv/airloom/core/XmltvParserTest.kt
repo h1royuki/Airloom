@@ -76,6 +76,23 @@ class XmltvParserTest {
         assertEquals(10_000, result.programmes)
         assertEquals(10_000, ids.size)
     }
+    @Test fun `programmes outside the accepted window are counted but not delivered`() {
+        val source = buildString {
+            append("<tv>")
+            repeat(4) { hour -> append("<programme channel=\"c\" start=\"202609291${hour}0000 Z\" stop=\"202609291${hour + 1}0000 Z\"><title>Show $hour</title></programme>") }
+            append("</tv>")
+        }
+        val windowStart = requireNotNull(XmltvParser.parseTime("20260929120000 Z"))
+        val windowEnd = requireNotNull(XmltvParser.parseTime("20260929130000 Z"))
+        val seen = mutableListOf<Long>()
+        val delivered = mutableListOf<Programme>()
+        // A 30-minute offset shifts every programme before the window check.
+        val result = XmltvParser.parse(source.byteInputStream(), "s", 30, accept = { start, end -> seen += start; end > windowStart && start < windowEnd }, onProgramme = delivered::add)
+        assertEquals(4, result.programmes)
+        assertEquals(4, seen.size)
+        assertEquals(listOf("Show 1", "Show 2"), delivered.map { it.title })
+        assertEquals(seen[1], delivered.first().start)
+    }
     @Test fun `cached timestamps retain accepted formats invalid dates and per parse offsets`() {
         val times = listOf("20260929", "2026092901", "202609290130", "20260929013015", "20260929013015 +0300", "20260929013015 -04:30", "20260929013015Z", " 20260929013015 +0000 ")
         val source = buildString {

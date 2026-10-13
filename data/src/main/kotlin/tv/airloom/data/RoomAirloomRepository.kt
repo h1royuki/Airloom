@@ -39,11 +39,10 @@ class RoomAirloomRepository @Inject constructor(
         dao.putListPreference(old.copy(pinned = value))
     } }
     override suspend fun reorderChannelList(scope: ChannelListScope, ids: List<String>) { database.withTransaction {
-        ids.distinct().forEachIndexed { index, id ->
-            val old = dao.listPreference(scope.playlistId, scope.kind.name, scope.category, id)
-                ?: ChannelListPreferenceEntity(scope.playlistId, scope.kind.name, scope.category, id)
-            dao.putListPreference(old.copy(position = index))
-        }
+        val existing = dao.currentListPreferences(scope.playlistId, scope.kind.name, scope.category).associateBy { it.channelId }
+        dao.putListPreferences(ids.distinct().mapIndexed { index, id ->
+            (existing[id] ?: ChannelListPreferenceEntity(scope.playlistId, scope.kind.name, scope.category, id)).copy(position = index)
+        })
     } }
     override suspend fun applyListMutation(mutation: ListMutation) { database.withTransaction {
         when (mutation) {
@@ -67,7 +66,8 @@ class RoomAirloomRepository @Inject constructor(
             is ListMutation.Icon -> setCategoryIcon(mutation.playlistId, mutation.name, mutation.icon)
             is ListMutation.Binding -> bindEpg(mutation.id, mutation.epg?.sourceId, mutation.epg?.id)
             is ListMutation.ChannelOrder -> {
-                val channels = dao.activeChannels().filter { it.playlistId == mutation.scope.playlistId }.map { it.model(dao.preference(it.id)) }
+                val preferences = dao.allPreferences().associateBy { it.channelId }
+                val channels = dao.activeChannels().filter { it.playlistId == mutation.scope.playlistId }.map { it.model(preferences[it.id]) }
                 val current = ListManagement.channels(channels, mutation.scope)
                 require(ListManagement.sameMembers(mutation.ids, current.map { it.id })) { "Catalogue changed" }
                 reorderChannelList(mutation.scope, mutation.ids)
@@ -113,7 +113,8 @@ class RoomAirloomRepository @Inject constructor(
             dao.activeChannels().find { it.id == channelId }?.let { importer.rematch(it.playlistId) }
         } else dao.putBindings(listOf(BindingEntity(channelId, sourceId, epgChannelId, true)))
     } }
-    override suspend fun findEpgChannels(query: String) = dao.findEpg("%${query.take(100)}%").map { EpgChannel(it.sourceId, it.id, it.name) }
+    // GLOB with case sets: SQLite's LIKE ignores case for ASCII only, and Cyrillic names must match in any case.
+    override suspend fun findEpgChannels(query: String) = dao.findEpg(globContaining(query.take(100))).map { EpgChannel(it.sourceId, it.id, it.name) }
     private val programmeSearch = ProgrammeSearch(dao, runtime)
     override suspend fun searchProgrammes(query: String, playlistId: String?, now: Long): List<Pair<Channel, Programme>> {
         if (query.isBlank()) return emptyList()

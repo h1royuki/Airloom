@@ -96,7 +96,7 @@ JDK 21, Android SDK Platform 35, Build Tools 35.0.0 and Platform Tools are requi
 - **Ask the user before any emulator run.** `check.sh --android`, individual `am instrument` runs and starting an emulator for verification take a long time (a full run is 6–7 minutes plus emulator boot), so do not start them on your own: ask and wait for the answer. Without asking, run only `./scripts/check.sh`. New and changed UI tests must still compile (`check.sh` builds the test APKs). If the emulator run was skipped, say so explicitly in your report and in the validation log.
 - `check.sh` runs Gradle with one worker and `android.experimental.lint.useK2Uast=false`: parallel lint crashes with an internal error on AGP 8.7.3. For single tasks use `./scripts/build.sh :app:compileDebugKotlin` and the like.
 - A full emulator run takes more than two minutes: run it in the background or with a timeout of at least 10 minutes and write the output to a file. Look for `OK (N tests)` and `Tests run:`. Reports are also saved to `artifacts/check/`.
-- Expected results: core — 48 tests (1 skipped), data — 11, playback — 9, app — 14; lint — 0 errors; data instrumentation — 35; app instrumentation — 133. There are no known failures: any failing test is a reason to investigate.
+- Expected results: core — 50 tests (1 skipped), data — 11, playback — 9, app — 14; lint — 0 errors; data instrumentation — 35; app instrumentation — 133. There are no known failures: any failing test is a reason to investigate.
 - `CataloguePerformanceTest` is excluded from the regular run: it is a slow synthetic benchmark.
 - CI (`.github/workflows/check.yml`) runs `./scripts/check.sh` on every push to `main` and on pull requests. It has no emulator and no signing key.
 

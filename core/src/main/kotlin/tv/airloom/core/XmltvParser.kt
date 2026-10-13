@@ -31,17 +31,20 @@ object XmltvParser {
         offsetMinutes: Int = 0,
         onChannel: (EpgChannel) -> Unit = {},
         onProgramme: (Programme) -> Unit,
-    ): XmltvParseResult = parseInternal(input, sourceId, offsetMinutes, onChannel, onProgramme, false)
+        /** Offset-adjusted start and end; a programme it rejects is counted but never built or delivered. */
+        accept: (start: Long, end: Long) -> Boolean = { _, _ -> true },
+    ): XmltvParseResult = parseInternal(input, sourceId, offsetMinutes, onChannel, accept, onProgramme, false)
 
     /** Read the leading channel metadata without traversing a large programme catalogue. */
     fun parseChannels(input: InputStream, sourceId: String, onChannel: (EpgChannel) -> Unit): Int =
-        parseInternal(input, sourceId, 0, onChannel, {}, true).channels
+        parseInternal(input, sourceId, 0, onChannel, { _, _ -> false }, {}, true).channels
 
     private fun parseInternal(
         input: InputStream,
         sourceId: String,
         offsetMinutes: Int,
         onChannel: (EpgChannel) -> Unit,
+        accept: (Long, Long) -> Boolean,
         onProgramme: (Programme) -> Unit,
         stopAfterChannels: Boolean,
     ): XmltvParseResult {
@@ -52,7 +55,7 @@ object XmltvParser {
             runCatching { factory.setFeature(it, false) }
         }
         val parser = factory.newSAXParser().xmlReader
-        val handler = Handler(sourceId, offsetMinutes, onChannel, onProgramme, stopAfterChannels)
+        val handler = Handler(sourceId, offsetMinutes, onChannel, accept, onProgramme, stopAfterChannels)
         parser.contentHandler = handler
         parser.errorHandler = handler
         parser.entityResolver = handler
@@ -105,6 +108,7 @@ object XmltvParser {
         val source: String,
         val offsetMinutes: Int,
         val onChannel: (EpgChannel) -> Unit,
+        val accept: (Long, Long) -> Boolean,
         val onProgramme: (Programme) -> Unit,
         val stopAfterChannels: Boolean,
     ) : DefaultHandler2() {
@@ -128,6 +132,7 @@ object XmltvParser {
         var fieldDepth = 0
         val text = StringBuilder()
         private val offsetMillis = offsetMinutes.toLong() * 60_000
+        private val sha256 = java.security.MessageDigest.getInstance("SHA-256")
         // EPG channels reuse the same broadcast-slot timestamps. Keep the expensive strict
         // conversion once per recent spelling, including invalid timestamps. This cache is
         // owned by one parse and bounded even for feeds with unique times for every entry.
@@ -196,8 +201,11 @@ object XmltvParser {
                 val from = start
                 val until = end
                 if (channelId.isNotBlank() && from != null && until != null && until > from) {
-                    onProgramme(Programme(stableId(source, channelId, from.toString(), until.toString()), source, channelId,
-                        title.ifBlank { "Без названия" }, from + offsetMillis, until + offsetMillis, description, category, catchupId))
+                    // The window check comes first: most of a full guide lies outside it and needs no identifier.
+                    if (accept(from + offsetMillis, until + offsetMillis)) {
+                        onProgramme(Programme(stableId(sha256, source, channelId, from.toString(), until.toString()), source, channelId,
+                            title.ifBlank { "Без названия" }, from + offsetMillis, until + offsetMillis, description, category, catchupId))
+                    }
                     programmes++
                 } else skipped++
                 inProgramme = false

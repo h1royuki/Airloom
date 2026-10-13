@@ -47,8 +47,12 @@ internal fun ChannelProgrammePanel(channel: Channel, browser: ProgrammeBrowserSt
     val past = date < today
     val earliest = ProgrammeBrowserPolicy.earliest(channel, now)
     val archive = ProgrammeBrowserPolicy.hasArchive(channel)
-    val rows = ProgrammeBrowserPolicy.visible(channel, browser.programmes, now)
-    val selected = ProgrammeBrowserPolicy.select(rows, browser.selected, now, date, ZoneId.systemDefault())
+    // Visibility resolves an archive address for every past programme of the day. A focus move or a 15-second tick
+    // must not repeat that; a minute is fine-grained enough for programmes ending and archives expiring.
+    val minute = now / 60_000
+    val rows = remember(channel, browser.programmes, minute) { ProgrammeBrowserPolicy.visible(channel, browser.programmes, now) }
+    val rowKeys = remember(rows) { rows.map { it.sourceId to it.id } }
+    val selected = remember(rows, browser.selected, date, minute) { ProgrammeBrowserPolicy.select(rows, browser.selected, now, date, ZoneId.systemDefault()) }
     var calendar by rememberSaveable(channel.id) { mutableStateOf(false) }
     var target by rememberSaveable(channel.id) { mutableStateOf("date") }
     var hasFocus by remember { mutableStateOf(false) }
@@ -61,7 +65,7 @@ internal fun ChannelProgrammePanel(channel: Channel, browser: ProgrammeBrowserSt
     var lastPositionKey by rememberSaveable(channel.id) { mutableStateOf("") }
     val key = "$date:${browser.positionRevision}"
     // Restore only on entry/explicit date changes, never on each focus move or clock tick.
-    LaunchedEffect(interactive, browser.load.phase, rows.map { it.sourceId to it.id }, key) {
+    LaunchedEffect(interactive, browser.load.phase, rowKeys, key) {
         if (!interactive) return@LaunchedEffect
         if (rows.isNotEmpty() && lastPositionKey != key) {
             val index = rows.indexOfFirst { ProgrammeBrowserPolicy.same(it, selected) }.coerceAtLeast(0)
@@ -150,8 +154,8 @@ internal fun ChannelProgrammePanel(channel: Channel, browser: ProgrammeBrowserSt
                         }) { actions.playBrowserProgramme(programme) }
                 }
             }
-            val unavailable = selected?.takeIf { it.end <= now }?.let {
-                CatchupResolver.resolve(PlaybackRequest.Archive(channel, it), now) as? CatchupResult.Unavailable
+            val unavailable = remember(channel, selected, minute) {
+                selected?.takeIf { it.end <= now }?.let { CatchupResolver.resolve(PlaybackRequest.Archive(channel, it), now) as? CatchupResult.Unavailable }
             }
             if (unavailable != null) Label(unavailable.reason, size = 12, color = Muted, maxLines = 2)
             if (!describesCurrent && selected?.description?.isNotBlank() == true) Label(selected.description, Modifier.testTag("programme_description"), size = 12, color = Muted, maxLines = 2)

@@ -120,8 +120,11 @@ object M3uParser {
     }.getOrDefault(false)
 }
 
-internal fun stableId(vararg parts: String): String {
-    val digest = MessageDigest.getInstance("SHA-256").digest(parts.joinToString("\u0000").toByteArray(Charsets.UTF_8))
+internal fun stableId(vararg parts: String): String = stableId(MessageDigest.getInstance("SHA-256"), *parts)
+
+/** [sha256] is reset by every call; a parser reuses one instance instead of looking it up per entry. */
+internal fun stableId(sha256: MessageDigest, vararg parts: String): String {
+    val digest = sha256.digest(parts.joinToString("\u0000").toByteArray(Charsets.UTF_8))
     val hex = "0123456789abcdef"
     return buildString(32) { repeat(16) { i ->
         val value = digest[i].toInt() and 255

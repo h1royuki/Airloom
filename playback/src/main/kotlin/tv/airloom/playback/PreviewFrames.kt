@@ -6,7 +6,6 @@ import android.view.TextureView
 import kotlinx.coroutines.withTimeoutOrNull
 import tv.airloom.core.AirloomRuntime
 import tv.airloom.core.Channel
-import java.security.MessageDigest
 
 interface FramePreviewService {
     fun key(channel: Channel): String
@@ -26,16 +25,8 @@ class PreviewFrames(context: Context, private val runtime: AirloomRuntime = Airl
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Entry>?) = size > 24
     }
 
-    override fun key(channel: Channel): String {
-        val value = listOf(channel.id, channel.url, channel.userAgent, channel.referer).joinToString("\u0000")
-        val hex = "0123456789abcdef"
-        return buildString(64) {
-            MessageDigest.getInstance("SHA-256").digest(value.toByteArray()).forEach { byte ->
-                val number = byte.toInt() and 255
-                append(hex[number ushr 4]); append(hex[number and 15])
-            }
-        }
-    }
+    // The key only indexes this in-memory cache, so it needs no digest: ChannelFrame computes it during composition.
+    override fun key(channel: Channel): String = listOf(channel.id, channel.url, channel.userAgent, channel.referer).joinToString("\u0000")
     @Synchronized override fun cached(key: String): Bitmap? = entries[key]?.bitmap
     @Synchronized override fun needsRefresh(key: String): Boolean = entries[key]?.let { it.bitmap == null || it.freshUntil <= runtime.now() } ?: true
     @Synchronized override fun coolingDown(key: String): Boolean = entries[key]?.let { it.retryAfter > runtime.now() } ?: false
