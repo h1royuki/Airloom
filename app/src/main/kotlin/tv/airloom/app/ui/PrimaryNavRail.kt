@@ -250,9 +250,9 @@ private fun NavigationRail(screen: Screen, selection: ChannelSelection, categori
         }
         Box(Modifier.padding(start = 12.dp, top = 5.dp, bottom = 5.dp).width(28.dp).height(1.dp).background(palette.line).testTag("guide_categories_separator"))
         if (movingCategory != null) MoveHint(moveSaving)
-        if (delayedLoading(loadPhase == LoadPhase.LOADING)) SkeletonRows(count = 6, height = 36, logos = false)
         if (loadPhase == LoadPhase.ERROR) RetryLoad(stringResource(R.string.ui_categories_load_failed), actions::retryCatalogue)
-        LazyColumn(state = listState, modifier = Modifier.weight(1f).testTag("guide_categories_list"), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Box(Modifier.weight(1f)) {
+        LazyColumn(state = listState, modifier = Modifier.fillMaxSize().testTag("guide_categories_list"), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             items(if (loadPhase == LoadPhase.LOADING) emptyList() else ordered, key = { it.key }) { entry ->
                 val rowKey = entry.key
                 val requester = requesters.getOrPut(rowKey) { FocusRequester() }
@@ -290,6 +290,9 @@ private fun NavigationRail(screen: Screen, selection: ChannelSelection, categori
                     }
                 }
             }
+        }
+        // A dot per icon slot while categories load; it dissolves into the items that take its place.
+        FadingPresence(loadPhase == LoadPhase.LOADING) { RailSkeleton() }
         }
         RemoteHints("←" to "поиск и настройки", modifier = Modifier.padding(start = 12.dp, top = 7.dp).graphicsLayer { alpha = expansion.value }.clearAndSetSemantics { })
     }

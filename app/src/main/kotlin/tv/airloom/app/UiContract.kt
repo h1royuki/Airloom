@@ -35,11 +35,15 @@ data class UiState(
     val epgSources: List<EpgSource> = emptyList(),
     val allChannels: List<Channel> = emptyList(),
     val channels: List<Channel> = emptyList(),
+    /** The selection [channels] was built for. While it differs from the current one the rows on screen are stale. Null: not tracked. */
+    val listedSelection: ChannelSelection? = null,
     val categories: List<Category> = emptyList(),
     val selectedPlaylistId: String? = null,
     val selectedCategory: String = "Все каналы",
     val selection: ChannelSelection? = null,
     val programmes: Map<String, List<Programme>> = emptyMap(),
+    /** Channels the last EPG window answered for; a channel outside it has no verdict yet. Null: every channel is answered. */
+    val epgAnswered: Set<String>? = null,
     val focusedChannel: Channel? = null,
     val focusedProgramme: Programme? = null,
     val detailChannel: Channel? = null,

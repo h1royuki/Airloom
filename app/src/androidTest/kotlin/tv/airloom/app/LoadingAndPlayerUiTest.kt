@@ -38,21 +38,70 @@ class LoadingAndPlayerUiTest {
         }
     } as UiActions
 
-    @Test fun loadingCatalogueHasDelayedSkeletonAndNoFalseEmptyState() {
+    @Test fun loadingCatalogueShowsSkeletonAtOnceAndNoFalseEmptyState() {
         val state = mutableStateOf(UiState(loading = false, screen = Screen.GUIDE,
             settings = AppSettings(preview = false), channelLoad = ContentLoad(LoadPhase.LOADING), categoryLoad = ContentLoad(LoadPhase.LOADING)))
         compose.mainClock.autoAdvance = false
         compose.setContent { AirloomApp(state.value, actions()) {} }
-        compose.mainClock.advanceTimeBy(100)
-        compose.onAllNodesWithTag("skeleton_rows").assertCountEquals(0)
-        compose.onNodeWithText("Список пуст").assertDoesNotExist()
-        compose.mainClock.advanceTimeBy(200)
+        // The very first frame already holds the outline of the list, the rail and the stage: no empty screen before it.
+        compose.mainClock.advanceTimeByFrame()
         compose.onAllNodesWithTag("skeleton_rows").assertCountEquals(2)
+        compose.onNodeWithTag("stage_skeleton").assertExists()
+        compose.onNodeWithText("Список пуст").assertDoesNotExist()
+        compose.onNodeWithTag("channels_empty_details").assertDoesNotExist()
         compose.runOnIdle { state.value = state.value.copy(channelLoad = ContentLoad(), categoryLoad = ContentLoad(),
             allChannels = listOf(channel), channels = listOf(channel), focusedChannel = channel) }
         compose.mainClock.autoAdvance = true
         compose.onAllNodesWithTag("skeleton_rows").assertCountEquals(0)
+        compose.onNodeWithTag("stage_skeleton").assertDoesNotExist()
         compose.onNodeWithContentDescription("Тестовый канал: Нет программы").assertIsDisplayed().assertIsFocused()
+    }
+
+    @Test fun staleListKeepsItsRowsAndShowsNoEmptyStateUntilTheNewOneIsBuilt() {
+        val sport = ChannelSelection.Category("fixture", "Спорт")
+        val state = mutableStateOf(UiState(loading = false, screen = Screen.GUIDE, settings = AppSettings(preview = false),
+            allChannels = listOf(channel), channels = listOf(channel), focusedChannel = channel,
+            selection = ChannelSelection.All, listedSelection = ChannelSelection.All))
+        compose.setContent { AirloomApp(state.value, actions()) {} }
+        compose.onNodeWithContentDescription("Тестовый канал: Нет программы").assertIsDisplayed()
+        // The section has changed, its list has not been built yet: the old rows stay, with no skeleton over them.
+        compose.runOnIdle { state.value = state.value.copy(selection = sport, selectedCategory = sport.label) }
+        compose.onNodeWithContentDescription("Тестовый канал: Нет программы").assertIsDisplayed()
+        compose.onAllNodesWithTag("skeleton_rows").assertCountEquals(0)
+        compose.onNodeWithText("Список пуст").assertDoesNotExist()
+        // An empty section is called empty only once its own list has arrived.
+        compose.runOnIdle { state.value = state.value.copy(channels = emptyList(), focusedChannel = null, listedSelection = sport) }
+        compose.onNodeWithText("Список пуст").assertIsDisplayed()
+        compose.onNodeWithTag("channels_empty_details").assertIsDisplayed()
+    }
+
+    @Test fun rowWaitsForItsOwnEpgAnswerBeforeSayingNothingIsOn() {
+        val state = mutableStateOf(UiState(loading = false, screen = Screen.GUIDE, settings = AppSettings(preview = false),
+            allChannels = listOf(channel), channels = listOf(channel), focusedChannel = channel, epgAnswered = emptySet()))
+        compose.setContent { AirloomApp(state.value, actions()) {} }
+        compose.onNodeWithContentDescription("Тестовый канал: Нет программы").assertIsDisplayed()
+        compose.onNodeWithText("Нет программы", useUnmergedTree = true).assertDoesNotExist()
+        compose.runOnIdle { state.value = state.value.copy(epgAnswered = setOf(channel.id)) }
+        compose.onNodeWithText("Нет программы", useUnmergedTree = true).assertIsDisplayed()
+    }
+
+    @Test fun openingStreamIsShownByTheControlsAndTheSpinnerIsForStalls() {
+        val state = mutableStateOf(UiState(loading = false, screen = Screen.PLAYER, settings = AppSettings(playerControlsSeconds = 0),
+            player = PlaybackState(request = PlaybackRequest.Live(channel), channel = channel, isBuffering = true, playWhenReady = true)))
+        compose.mainClock.autoAdvance = false
+        compose.setContent { AirloomPlayerOverlay(state.value, actions()) }
+        compose.mainClock.advanceTimeBy(1_000)
+        compose.onNodeWithTag("player_connecting", useUnmergedTree = true).assertExists()
+        compose.onNodeWithTag("player_buffering").assertDoesNotExist()
+        // The first frame has arrived; a later stall is short at first and passes without a spinner.
+        compose.runOnIdle { state.value = state.value.copy(player = state.value.player.copy(hasRenderedFrame = true, isBuffering = false, isPlaying = true)) }
+        compose.mainClock.advanceTimeBy(300)
+        compose.onNodeWithTag("player_connecting", useUnmergedTree = true).assertDoesNotExist()
+        compose.runOnIdle { state.value = state.value.copy(player = state.value.player.copy(isBuffering = true, isPlaying = false)) }
+        compose.mainClock.advanceTimeBy(300)
+        compose.onNodeWithTag("player_buffering").assertDoesNotExist()
+        compose.mainClock.advanceTimeBy(400)
+        compose.onNodeWithTag("player_buffering").assertExists()
     }
 
     @Test fun searchDoesNotShowNoResultsWhileItIsLoading() {

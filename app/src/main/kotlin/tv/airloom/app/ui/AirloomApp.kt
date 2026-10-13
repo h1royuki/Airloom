@@ -33,14 +33,23 @@ fun AirloomApp(state: UiState, actions: UiActions, playerBounds: (Rect?) -> Unit
         CompositionLocalProvider(LocalProviderProfile provides state.provider) {
         BackHandler { actions.back() }
         val transitionDuration = motionDuration(160)
+        val startupDuration = motionDuration(Motion.Screen)
+        // The text outlives the message by the length of its exit.
+        val lastMessage = remember { arrayOfNulls<String>(1) }
+        state.message?.let { lastMessage[0] = it }
+        val messageDuration = motionDuration(Motion.Enter)
         Box(Modifier.fillMaxSize()) {
-            if (state.loading) StartupLoading()
-            else if (state.startupError != null) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            if (!state.loading && state.startupError != null) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Column(Modifier.width(420.dp)) { RetryLoad(state.startupError, actions::retryStartup) }
             }
             // Search is a layer over the channels, not a screen: both share one piece of content.
-            else AnimatedContent(if (state.screen == Screen.SEARCH) Screen.GUIDE else state.screen, transitionSpec = { fadeIn(tween(transitionDuration)) togetherWith fadeOut(tween(transitionDuration)) }, label = "screen") { screen ->
-                screenState.SaveableStateProvider(screen.name) {
+            // The start-up mark is the first target (null), so it dissolves into the first screen instead of being cut.
+            else AnimatedContent(if (state.loading) null else if (state.screen == Screen.SEARCH) Screen.GUIDE else state.screen, transitionSpec = {
+                val duration = if (initialState == null) startupDuration else transitionDuration
+                fadeIn(tween(duration)) togetherWith fadeOut(tween(duration))
+            }, label = "screen") { screen ->
+                if (screen == null) StartupLoading()
+                else screenState.SaveableStateProvider(screen.name) {
                 val current = screen == state.screen || screen == Screen.GUIDE && state.screen == Screen.SEARCH
                 CompositionLocalProvider(LocalUiInteractive provides current) { when (screen) {
                 Screen.ONBOARDING -> OnboardingScreen(state.onboarding, state.settings, state.importResult, state.progress, state.error, state.busy, WizardCallbacks(
@@ -58,7 +67,11 @@ fun AirloomApp(state: UiState, actions: UiActions, playerBounds: (Rect?) -> Unit
             }
             }
             }
-            if (state.message != null) Box(Modifier.align(Alignment.BottomCenter).padding(bottom = SafeVertical).clip(RoundedCornerShape(50)).background(LocalPalette.current.focus).padding(horizontal = 20.dp, vertical = 11.dp)) { Label(state.message, size = 14, color = LocalPalette.current.onFocus) }
+            AnimatedVisibility(state.message != null, Modifier.align(Alignment.BottomCenter).padding(bottom = SafeVertical),
+                enter = fadeIn(tween(messageDuration)) + slideInVertically(tween(messageDuration)) { it / 3 },
+                exit = fadeOut(tween(messageDuration)) + slideOutVertically(tween(messageDuration)) { it / 3 }) {
+                Box(Modifier.clip(RoundedCornerShape(50)).background(LocalPalette.current.focus).padding(horizontal = 20.dp, vertical = 11.dp)) { Label(lastMessage[0].orEmpty(), size = 14, color = LocalPalette.current.onFocus) }
+            }
         }
         if (state.error != null && state.screen != Screen.ONBOARDING) AirloomDialog(stringResource(R.string.ui_operation_failed), actions::dismissMessage) { Label(state.error, color = Peach, size = 14) }
         if (state.screen == Screen.GUIDE && state.player.error != null && state.error == null && !playerErrorDismissed) AirloomDialog(stringResource(R.string.ui_playback_failed), { playerErrorDismissed = true }) {

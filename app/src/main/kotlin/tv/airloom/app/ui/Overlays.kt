@@ -44,7 +44,8 @@ internal fun AirloomDialog(title: String, onDismiss: () -> Unit, animateDismiss:
     LaunchedEffect(Unit) { visible = true }
     val close: () -> Unit = { if (visible && dismissEnabled) { if (!animateDismiss) onDismiss() else { visible = false; scope.launch { delay(duration.toLong()); onDismiss() } } } }
     Dialog(close, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        AnimatedVisibility(visible, enter = fadeIn(tween(duration)), exit = fadeOut(tween(duration))) {
+        AnimatedVisibility(visible, enter = fadeIn(tween(duration)) + scaleIn(tween(duration, easing = Motion.Decelerate), initialScale = .96f),
+            exit = fadeOut(tween(duration)) + scaleOut(tween(duration), targetScale = .96f)) {
         CompositionLocalProvider(LocalUiInteractive provides visible, LocalSettingsFocus provides null, LocalNavigationFocus provides null) {
         Column(Modifier.width(480.dp).heightIn(max = 460.dp).clip(PanelShape).background(LocalPalette.current.panel).padding(26.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Label(title, size = 22, bold = true)

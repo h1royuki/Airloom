@@ -12,6 +12,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.StrokeCap
@@ -21,10 +22,11 @@ import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import kotlinx.coroutines.delay
 
+/** True once [loading] has lasted [delayMs]. For indicators over content that is already there, such as buffering; a first load shows its skeleton at once. */
 @Composable
-internal fun delayedLoading(loading: Boolean): Boolean {
+internal fun delayedLoading(loading: Boolean, delayMs: Long = 150): Boolean {
     var visible by remember(loading) { mutableStateOf(false) }
-    LaunchedEffect(loading) { if (loading) { delay(150); visible = true } }
+    LaunchedEffect(loading) { if (loading) { delay(delayMs); visible = true } }
     return loading && visible
 }
 
@@ -50,40 +52,81 @@ internal fun StartupLoading() {
     }
 }
 
+/**
+ * Placeholder rows in the geometry of [ChannelRowBody]: number, logo tile and two lines, with no fill of
+ * their own, so the real rows land exactly where the skeleton was. Rows keep their height when the
+ * column is given less room; a caller that fills a viewport clips the overflow.
+ */
 @Composable
-internal fun SkeletonRows(count: Int = 6, height: Int = 56, logos: Boolean = true, modifier: Modifier = Modifier) {
-    val alpha = pulse(1_100)
+internal fun SkeletonRows(count: Int = 6, height: Int = 56, numbered: Boolean = false, modifier: Modifier = Modifier) {
+    val clock = skeletonClock()
     val loadingDescription = stringResource(R.string.ui_loading_list)
     Column(modifier.fillMaxWidth().testTag("skeleton_rows").semantics { contentDescription = loadingDescription },
         verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        repeat(count) {
-            Row(Modifier.fillMaxWidth().height(height.dp).clip(RowShape)
-                .background(LocalPalette.current.container.copy(alpha = .5f)).padding(horizontal = 12.dp)
-                .graphicsLayer { this.alpha = alpha }, verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (logos) SkeletonBlock(Modifier.size(36.dp))
+        repeat(count) { index ->
+            Row(Modifier.fillMaxWidth().requiredHeight(height.dp).padding(horizontal = 12.dp).skeletonWave(clock, index),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (numbered) Box(Modifier.width(26.dp)) { SkeletonBlock(Modifier.size(14.dp, 10.dp)) }
+                SkeletonBlock(Modifier.size(36.dp), radius = 10)
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                    SkeletonBlock(Modifier.fillMaxWidth(.7f).height(12.dp))
-                    if (logos) SkeletonBlock(Modifier.fillMaxWidth(.92f).height(9.dp))
+                    SkeletonBlock(Modifier.fillMaxWidth(.52f).height(12.dp))
+                    SkeletonBlock(Modifier.fillMaxWidth(.78f).height(9.dp))
                 }
             }
         }
     }
 }
 
+/** The rail while categories load: a dot in every icon slot, which is all a collapsed rail shows of a row. */
 @Composable
-private fun SkeletonBlock(modifier: Modifier) {
-    Box(modifier.clip(RoundedCornerShape(5.dp)).background(MaterialTheme.colorScheme.onSurface.copy(alpha = .14f)))
+internal fun RailSkeleton(count: Int = 8, modifier: Modifier = Modifier) {
+    val clock = skeletonClock()
+    val loadingDescription = stringResource(R.string.ui_loading_list)
+    Column(modifier.fillMaxWidth().testTag("skeleton_rows").semantics { contentDescription = loadingDescription },
+        verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        repeat(count) { index ->
+            Box(Modifier.width(RailSlot).height(36.dp).skeletonWave(clock, index), contentAlignment = Alignment.Center) {
+                SkeletonBlock(Modifier.size(22.dp), radius = 11)
+            }
+        }
+    }
 }
 
 @Composable
-internal fun EpgSkeleton() {
-    val alpha = pulse(1_100)
-    Column(Modifier.fillMaxWidth().graphicsLayer { this.alpha = alpha }.testTag("epg_skeleton"), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        SkeletonBlock(Modifier.fillMaxWidth(.78f).height(25.dp))
-        SkeletonBlock(Modifier.width(130.dp).height(12.dp))
-        Spacer(Modifier.height(7.dp))
-        repeat(3) { SkeletonBlock(Modifier.fillMaxWidth(.9f).height(14.dp)) }
+private fun SkeletonBlock(modifier: Modifier, radius: Int = 5) {
+    Box(modifier.clip(RoundedCornerShape(radius.dp)).background(MaterialTheme.colorScheme.onSurface.copy(alpha = .14f)))
+}
+
+/** Schedule rows while a day loads: a time and a title per row, in the geometry of the programme list. */
+@Composable
+internal fun ScheduleSkeleton(count: Int = 4, modifier: Modifier = Modifier, clock: State<Float>? = skeletonClock(), offset: Int = 0) {
+    Column(modifier.fillMaxWidth().testTag("epg_skeleton"), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        repeat(count) { index ->
+            Row(Modifier.fillMaxWidth().requiredHeight(38.dp).padding(horizontal = 13.dp).skeletonWave(clock, offset + index),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                SkeletonBlock(Modifier.size(34.dp, 12.dp))
+                SkeletonBlock(Modifier.fillMaxWidth(listOf(.55f, .4f, .62f, .48f)[index % 4]).height(12.dp))
+            }
+        }
+    }
+}
+
+/**
+ * The stage while the first list loads: the frame, the date row and a few schedule rows where
+ * [ChannelProgrammePanel] will put them. The frame has the real frame's colour, so nothing shifts on arrival.
+ */
+@Composable
+internal fun StageSkeleton(modifier: Modifier = Modifier) {
+    val clock = skeletonClock()
+    Column(modifier.fillMaxSize().testTag("stage_skeleton").clearAndSetSemantics { }, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Box(Modifier.height(24.dp).skeletonWave(clock, 0), contentAlignment = Alignment.CenterStart) { SkeletonBlock(Modifier.size(120.dp, 14.dp)) }
+        Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).skeletonWave(clock, 1).clip(PanelShape).background(LocalPalette.current.container))
+        Row(Modifier.skeletonWave(clock, 4), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            SkeletonBlock(Modifier.size(36.dp), radius = 18)
+            SkeletonBlock(Modifier.size(190.dp, 36.dp), radius = 18)
+            SkeletonBlock(Modifier.size(36.dp), radius = 18)
+        }
+        ScheduleSkeleton(4, Modifier.weight(1f).clipToBounds(), clock, offset = 5)
     }
 }
 

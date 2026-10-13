@@ -57,6 +57,8 @@ class AirloomViewModel @Inject constructor(
     private val settingsWrites = linkedMapOf<Long, (AppSettings) -> AppSettings>()
     private val onboardingWrites = linkedMapOf<Long, (OnboardingState) -> OnboardingState>()
     private var channelRebuild: Job? = null
+    /** The catalogue has answered; the first built list then ends the loading phase. */
+    private var catalogueAnswered = false
     @Volatile private var operationCommitted = false
     private var cancellationRequested = false
 
@@ -115,7 +117,7 @@ class AirloomViewModel @Inject constructor(
                     val built = withContext(runtime.computation) { buildChannelList(snapshot) }
                     mutableState.update { current ->
                         if (current.channelListScope() != scope) current else current.copy(channelPreferenceScope = scope,
-                            channelListPreferences = preferences, channels = built.first.sameAs(current.channels), focusedChannel = built.second)
+                            channelListPreferences = preferences, channels = built.first.sameAs(current.channels), listedSelection = snapshot.channelSelection, focusedChannel = built.second)
                     }
                     rebuildChannels()
                 }
@@ -126,14 +128,20 @@ class AirloomViewModel @Inject constructor(
         viewModelScope.launch {
             combine(selectedSource, catalogueRetry) { id, _ -> id }.flatMapLatest { id ->
                 repository.channels(id, includeHidden = true)
-                    .onStart { mutableState.update { it.copy(channelLoad = ContentLoad(if (it.allChannels.isEmpty()) LoadPhase.LOADING else LoadPhase.READY, it.allChannels.isNotEmpty())) } }
+                    .onStart {
+                        if (state.value.allChannels.isEmpty()) catalogueAnswered = false
+                        mutableState.update { it.copy(channelLoad = ContentLoad(if (it.allChannels.isEmpty()) LoadPhase.LOADING else LoadPhase.READY, it.allChannels.isNotEmpty())) }
+                    }
                     .catch { error ->
                         if (error is CancellationException) throw error
                         mutableState.update { it.copy(channelLoad = ContentLoad(LoadPhase.ERROR)) }
                     }
             }.collect { list ->
                 if (!state.value.moveSaving && state.value.movingChannelId != null && list != state.value.allChannels) finishMove(false)
-                mutableState.update { it.copy(allChannels = list, channelLoad = ContentLoad()) }; rebuildChannels(); maybeStartup()
+                // Loading ends with the first built list, not here: in between the screen would show an empty section.
+                catalogueAnswered = true
+                mutableState.update { it.copy(allChannels = list, channelLoad = if (it.channelLoad.phase == LoadPhase.LOADING) it.channelLoad else ContentLoad()) }
+                rebuildChannels(); maybeStartup()
             }
         }
         viewModelScope.launch {
@@ -159,7 +167,8 @@ class AirloomViewModel @Inject constructor(
                         if (error is CancellationException) throw error
                         mutableState.update { it.copy(epgLoad = ContentLoad(LoadPhase.ERROR)) }
                     }
-            }.collect { programmes -> mutableState.update { it.copy(programmes = programmes, epgLoad = ContentLoad()) } }
+                    .map { ids to it }
+            }.collect { (ids, programmes) -> mutableState.update { it.copy(programmes = programmes, epgAnswered = ids.toSet(), epgLoad = ContentLoad()) } }
         }
         viewModelScope.launch {
             combine(state.map { s ->
@@ -175,10 +184,16 @@ class AirloomViewModel @Inject constructor(
                         val old = s.programmeBrowser
                         val browser = if (old.channelId != channel.id) ProgrammeBrowserState(channelId = channel.id) else if (!ProgrammeBrowserPolicy.hasArchive(channel)) old.copy(date = null) else old
                         val sameDay = browser.loadedDate == query.date
+                        // Today starts from what the channel list already loaded for this channel, so the stage
+                        // is not taken apart while the whole day is read; the day then extends these rows.
+                        val seed = if (sameDay || query.date != ProgrammeBrowserPolicy.today(s.now, query.zone)) emptyList() else {
+                            val (start, end) = ProgrammeBrowserPolicy.window(query.date, query.zone)
+                            s.programmes[channel.id].orEmpty().filter { it.end > it.start && it.start < end && it.end > start }
+                        }
                         s.copy(programmeBrowser = browser.copy(
-                            programmes = if (sameDay) browser.programmes else emptyList(),
+                            programmes = if (sameDay) browser.programmes else seed,
                             selected = if (sameDay) browser.selected else null,
-                            load = ContentLoad(if (sameDay && browser.programmes.isNotEmpty()) LoadPhase.READY else LoadPhase.LOADING, sameDay),
+                            load = ContentLoad(if (sameDay && browser.programmes.isNotEmpty() || seed.isNotEmpty()) LoadPhase.READY else LoadPhase.LOADING, sameDay),
                         ))
                     }
                     try {
@@ -325,8 +340,10 @@ class AirloomViewModel @Inject constructor(
         channelRebuild?.cancel()
         channelRebuild = viewModelScope.launch {
             val s = state.value
+            val answered = catalogueAnswered
             val built = withContext(runtime.computation) { buildChannelList(s) }
-            mutableState.update { current -> current.copy(channels = built.first.sameAs(current.channels),
+            mutableState.update { current -> current.copy(channels = built.first.sameAs(current.channels), listedSelection = s.channelSelection,
+                channelLoad = if (answered && current.channelLoad.phase == LoadPhase.LOADING) ContentLoad() else current.channelLoad,
                 focusedChannel = if (current.screen == Screen.PLAYER && current.player.request == null) current.focusedChannel
                     else if (current.focusedChannel != s.focusedChannel) built.first.firstOrNull { it.id == current.focusedChannel?.id } ?: built.second
                     else built.second,
@@ -508,6 +525,8 @@ class AirloomViewModel @Inject constructor(
         selectedSource.value = id; visibleIds.value = emptyList()
         mutableState.update { it.copy(selectedPlaylistId = id, selectedCategory = "Все каналы", selection = ChannelSelection.All, focusedChannel = null, programmes = emptyMap()) }
         updateSettings(state.value.settings.copy(selectedPlaylistId = id, lastCategory = "Все каналы", channelSelection = ChannelSelection.All))
+        // The same source emits nothing new, and the list must still follow the selection.
+        rebuildChannels()
     }
     override fun selectCategory(name: String) = select(ChannelSelection.legacy(name, state.value.selectedPlaylistId.orEmpty()))
     override fun selectCategory(category: Category) = select(ChannelSelection.Category(category.playlistId, category.name))

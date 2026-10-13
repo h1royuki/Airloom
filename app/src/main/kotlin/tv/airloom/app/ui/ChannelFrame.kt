@@ -60,7 +60,7 @@ internal fun ChannelFrame(
         if (fresh != null) image = fresh
         refreshPending = false
     }
-    val alpha by animateFloatAsState(if (image != null && enabled) 1f else 0f, tween(motionDuration(180)), label = "preview")
+    val alpha by animateFloatAsState(if (image != null && enabled) 1f else 0f, tween(motionDuration(240)), label = "preview")
     Box(modifier.then(if (fullscreen) Modifier else Modifier.clip(PanelShape))
         .background(LocalPalette.current.container).testTag("channel_frame"), contentAlignment = Alignment.Center) {
         if (enabled && refreshPending && channel != null && captureEnabled && foreground) AndroidView(
@@ -72,7 +72,8 @@ internal fun ChannelFrame(
             else ChannelLogo(channel, true, 52, Modifier.size(96.dp), playlistLocation)
         }
         image?.takeIf { enabled }?.let { bitmap ->
-            Image(bitmap.asImageBitmap(), null, Modifier.fillMaxSize().graphicsLayer { this.alpha = alpha }
+            // The frame settles into place as it comes in; both values are read only while drawing.
+            Image(bitmap.asImageBitmap(), null, Modifier.fillMaxSize().graphicsLayer { this.alpha = alpha; val scale = 1.03f - .03f * alpha; scaleX = scale; scaleY = scale }
                 .testTag("channel_frame_image"), contentScale = ContentScale.Fit)
         }
     }

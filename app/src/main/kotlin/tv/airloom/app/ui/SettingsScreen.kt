@@ -1,7 +1,10 @@
 package tv.airloom.app.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -58,6 +61,7 @@ internal fun SettingsScreen(state: UiState, actions: UiActions) {
     }
     BackHandler(contentFocused) { menu.getValue(section).requestFocus() }
     LaunchedEffect(Unit) { withFrameNanos { }; menu.getValue(section).requestFocus() }
+    val opened = remember { booleanArrayOf(true) }
     NavigationLayout(state, actions) {
         Column(Modifier.width(if (LocalTextScale.current > 1f) 296.dp else 272.dp).fillMaxHeight()
             .padding(start = 16.dp, top = SafeVertical, bottom = SafeVertical).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -77,7 +81,11 @@ internal fun SettingsScreen(state: UiState, actions: UiActions) {
                         menu.getValue(section).requestFocus(); true
                     } else false
                 }, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Box(Modifier.weight(1f)) {
+                // Another section comes in over the previous one's place; the value is read only while drawing.
+                val arrival = remember(section) { Animatable(if (opened[0]) 1f else 0f).also { opened[0] = false } }
+                val arrivalDuration = motionDuration(Motion.Swap)
+                LaunchedEffect(arrival) { if (arrival.value < 1f) arrival.animateTo(1f, tween(arrivalDuration)) }
+                Box(Modifier.weight(1f).then(remember(arrival) { Modifier.graphicsLayer { alpha = arrival.value } })) {
                     holder.SaveableStateProvider(section.name) {
                         when (section) {
                             SettingsSection.CONNECTION -> ProviderSettings(state, actions, epg = false)

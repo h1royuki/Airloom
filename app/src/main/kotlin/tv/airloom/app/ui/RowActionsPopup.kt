@@ -1,6 +1,10 @@
 package tv.airloom.app.ui
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -40,8 +44,15 @@ internal fun RowActionsPopup(title: String, pinned: Boolean, onDismiss: () -> Un
     val gap = with(LocalDensity.current) { 8.dp.roundToPx() }
     Popup(popupPositionProvider = remember(gap) { RowMenuPosition(gap) }, onDismissRequest = dismiss,
         properties = PopupProperties(focusable = true, dismissOnBackPress = true, dismissOnClickOutside = true)) {
+        // The menu grows out of its row: one value, read only while drawing.
+        val appear = remember { Animatable(0f) }
+        val appearDuration = motionDuration(120)
+        LaunchedEffect(Unit) { appear.animateTo(1f, tween(appearDuration, easing = Motion.Decelerate)) }
         CompositionLocalProvider(LocalNavigationFocus provides null, LocalSettingsFocus provides null) {
-            Column(Modifier.clip(RoundedCornerShape(20.dp)).background(LocalPalette.current.container)
+            Column(Modifier.graphicsLayer {
+                alpha = appear.value; val scale = .96f + .04f * appear.value; scaleX = scale; scaleY = scale
+                transformOrigin = TransformOrigin(0f, .5f)
+            }.clip(RoundedCornerShape(20.dp)).background(LocalPalette.current.container)
                 .border(1.dp, LocalPalette.current.line, RoundedCornerShape(20.dp)).padding(10.dp).testTag("row_actions_popup")
                 .onPreviewKeyEvent { event ->
                     if (event.key == Key.Back) { if (event.type == KeyEventType.KeyUp) dismiss(); true } else false

@@ -16,6 +16,8 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -105,15 +107,22 @@ internal fun ChannelProgrammePanel(channel: Channel, browser: ProgrammeBrowserSt
                 TvAction("Следующий день", Modifier.size(36.dp).testTag("programme_next_day"), icon = Icons.Outlined.ChevronRight, iconOnly = true,
                     enabled = date < today, onFocus = { target = "date" }) { actions.stepProgrammeDay(1); restoreDate++ }
                 Spacer(Modifier.weight(1f))
+                // In the date row, not in the column: a refresh must not push the schedule down.
+                if (browser.load.refreshing) LoadingIndicator(Modifier.size(16.dp))
                 if (past) TvAction("К текущей", Modifier.testTag("programme_current"), quiet = true,
                     onFocus = { target = "date" }) { actions.currentProgramme(); restoreDate++ }
             }
-            else Label("Сегодня · ${today.format(dayMonthFormat)}", size = 12, color = Muted)
+            else Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Label("Сегодня · ${today.format(dayMonthFormat)}", Modifier.weight(1f), size = 12, color = Muted)
+                if (browser.load.refreshing) LoadingIndicator(Modifier.size(16.dp))
+            }
             if (browser.load.phase == LoadPhase.ERROR) RetryLoad("Не удалось загрузить телепрограмму", actions::retryProgrammeDay)
-            if (browser.load.refreshing) LoadingIndicator(Modifier.size(16.dp))
-            if (delayedLoading(browser.load.phase == LoadPhase.LOADING)) EpgSkeleton()
-            if (rows.isEmpty()) Box(Modifier.weight(1f).testTag("programme_empty_day").then(if (!archive) Modifier.focusRequester(dateFocus).focusable(interactive) else Modifier), contentAlignment = Alignment.CenterStart) {
-                Label(when (browser.load.phase) { LoadPhase.READY -> "Нет телепрограммы за эту дату"; LoadPhase.ERROR -> "Телепрограмма недоступна"; LoadPhase.LOADING -> "Загрузка телепрограммы…" }, size = 14, color = Muted)
+            val dayLoading = browser.load.phase == LoadPhase.LOADING
+            if (rows.isEmpty()) Box(Modifier.weight(1f).testTag("programme_empty_day").then(if (!archive) Modifier.focusRequester(dateFocus).focusable(interactive) else Modifier),
+                contentAlignment = if (dayLoading) Alignment.TopStart else Alignment.CenterStart) {
+                // A loading day keeps the outline of its rows; the verdicts are shown only once the day has answered.
+                if (dayLoading) ScheduleSkeleton(4, Modifier.clipToBounds().semantics { contentDescription = "Загрузка телепрограммы" })
+                else Label(if (browser.load.phase == LoadPhase.ERROR) "Телепрограмма недоступна" else "Нет телепрограммы за эту дату", size = 14, color = Muted)
             } else LazyColumn(state = listState, modifier = Modifier.weight(1f).then(if (!archive) Modifier.focusRequester(dateFocus) else Modifier).testTag("programme_day_list"), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 items(rows, key = { "${it.sourceId}:${it.id}" }) { programme ->
                     val isCurrent = programme.start <= now && programme.end > now

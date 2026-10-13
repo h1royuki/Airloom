@@ -3,6 +3,11 @@ package tv.airloom.app.ui
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
@@ -84,7 +89,15 @@ fun AirloomPlayerOverlay(state: UiState, actions: UiActions, progress: StateFlow
         }
     }
     AirloomTheme(accent = state.settings.accent.color(), textScale = listOf(.9f, 1f, 1.15f)[state.settings.textSize.coerceIn(0, 2)]) {
-        val buffering = delayedLoading(state.player.isBuffering)
+        // Opening a stream is shown by the controls themselves. The spinner is for a stall in a stream that
+        // was already playing, where a short one passes unnoticed, and for opening with the controls hidden.
+        val connecting = state.player.isBuffering && !state.player.hasRenderedFrame
+        val controlsShown = state.playerControls && state.player.request != null && state.player.error == null && !state.quickChannels
+        val buffering = delayedLoading(state.player.isBuffering && !(connecting && controlsShown), if (state.player.hasRenderedFrame) 500 else 150)
+        // The idle frame comes up with the screen, settling from slightly larger. Read only while drawing.
+        val opening = remember { Animatable(0f) }
+        val openingDuration = motionDuration(Motion.Screen)
+        LaunchedEffect(Unit) { opening.animateTo(1f, tween(openingDuration, easing = Motion.Decelerate)) }
         Box(Modifier.fillMaxSize().focusRequester(videoFocus).onFocusChanged { videoFocused = it.isFocused }
             .onPreviewKeyEvent { event ->
                 if (state.quickChannels || event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
@@ -104,11 +117,16 @@ fun AirloomPlayerOverlay(state: UiState, actions: UiActions, progress: StateFlow
                 }
             }.focusable()) {
             val pendingChannel = state.player.channel ?: state.focusedChannel?.takeIf { it.id == state.settings.lastChannelId }
-            if (!state.player.hasRenderedFrame && pendingChannel != null) {
-                ChannelFrame(pendingChannel, state.settings.preview, Modifier.fillMaxSize().testTag("player_idle_background"),
-                    state.playlists.firstOrNull { it.id == pendingChannel.playlistId }?.location,
-                    fullscreen = true, captureEnabled = state.player.request == null && state.settings.preview)
-                Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(Color.Black.copy(alpha = .85f), Color.Black.copy(alpha = .25f)))))
+            // It stays composed while it dissolves into the first video frame instead of being cut away.
+            FadingPresence(!state.player.hasRenderedFrame && pendingChannel != null, Modifier.fillMaxSize(), Motion.Screen) {
+                if (pendingChannel != null) Box(Modifier.fillMaxSize().graphicsLayer {
+                    alpha = opening.value; val scale = 1.06f - .06f * opening.value; scaleX = scale; scaleY = scale
+                }) {
+                    ChannelFrame(pendingChannel, state.settings.preview, Modifier.fillMaxSize().testTag("player_idle_background"),
+                        state.playlists.firstOrNull { it.id == pendingChannel.playlistId }?.location,
+                        fullscreen = true, captureEnabled = state.player.request == null && state.settings.preview)
+                    Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(Color.Black.copy(alpha = .85f), Color.Black.copy(alpha = .25f)))))
+                }
             }
             if (state.player.request == null) {
                 Column(Modifier.align(Alignment.CenterStart).fillMaxWidth(.65f).padding(start = SafeHorizontal, end = 24.dp),
@@ -130,8 +148,10 @@ fun AirloomPlayerOverlay(state: UiState, actions: UiActions, progress: StateFlow
                     if (!state.player.playWhenReady) Label("На паузе. Нажмите «Смотреть», чтобы продолжить.", size = 13)
                 }
             }
-            if (buffering && state.player.recovery == null) Box(Modifier.align(Alignment.Center).size(72.dp).clip(RoundedCornerShape(50)).background(Color.Black.copy(alpha = .6f)), contentAlignment = Alignment.Center) {
-                LoadingIndicator(Modifier.testTag("player_buffering"), label = stringResource(R.string.ui_loading_video))
+            FadingPresence(buffering && state.player.recovery == null, Modifier.align(Alignment.Center), Motion.Swap) {
+                Box(Modifier.size(72.dp).clip(RoundedCornerShape(50)).background(Color.Black.copy(alpha = .6f)), contentAlignment = Alignment.Center) {
+                    LoadingIndicator(Modifier.testTag("player_buffering"), label = stringResource(R.string.ui_loading_video))
+                }
             }
             state.player.error?.let { error ->
                 Column(Modifier.align(Alignment.Center).width(440.dp).clip(PanelShape)
@@ -199,6 +219,7 @@ private fun PlayerControls(state: UiState, progress: StateFlow<PlaybackState>?, 
     var draftPosition by draftState
     var timelineFocused by timelineFocusedState
     val archive = player.request is PlaybackRequest.Archive
+    val connecting = player.isBuffering && !player.hasRenderedFrame
     CompositionLocalProvider(LocalUiInteractive provides (state.playerControls && !state.quickChannels && player.error == null)) {
         Box(Modifier.fillMaxSize()) {
             // Channel and clock sit at the top, so the lower third carries only the title, the timeline and one row of buttons.
@@ -218,21 +239,6 @@ private fun PlayerControls(state: UiState, progress: StateFlow<PlaybackState>?, 
             Column(Modifier.align(Alignment.BottomStart).fillMaxWidth().background(Brush.verticalGradient(
                 0f to Color.Transparent, .25f to Color.Black.copy(alpha = .3f), 1f to Color.Black.copy(alpha = .85f)))
                 .padding(start = SafeHorizontal, end = SafeHorizontal, top = 44.dp, bottom = SafeVertical), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Column(Modifier.fillMaxWidth().testTag("player_information"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Label(programme?.title?.takeIf(String::isNotBlank) ?: player.channel?.name.orEmpty(),
-                        Modifier.fillMaxWidth(.72f).testTag("player_title"), size = 30, bold = true, color = Color.White, maxLines = 2)
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                        if (archive) Label(stringResource(R.string.ui_player_archive), Modifier.testTag("player_channel_mode"), size = 14, bold = true, color = Peach, maxLines = 1)
-                        else LiveIndicator(stringResource(R.string.ui_player_live), Modifier.testTag("player_channel_mode"), size = 14, color = LiveOnVideo)
-                        if (archive) programme?.let { Label("${timeLabel(it.start)}–${timeLabel(it.end)}", size = 14, color = Color.White.copy(alpha = .85f), maxLines = 1) }
-                        // Only the live view says what is next, and only while the current programme is ending.
-                        val next = state.announcedNext(programme)
-                        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
-                            if (next != null) Label("Далее в ${timeLabel(next.start)} · ${next.title}", Modifier.testTag("player_next_programme"),
-                                size = 14, color = Color.White.copy(alpha = .75f), maxLines = 1)
-                        }
-                    }
-                }
                 val canSeek = archive && player.isSeekable
                 val duration = player.durationMs.takeIf { it > 0 } ?: programme?.let { (it.end - it.start).coerceAtLeast(0) } ?: 0
                 val position = draftPosition ?: player.positionMs
@@ -241,6 +247,23 @@ private fun PlayerControls(state: UiState, progress: StateFlow<PlaybackState>?, 
                     !archive && programme != null -> Triple(((state.now - programme.start).toFloat() / (programme.end - programme.start).coerceAtLeast(1)).coerceIn(0f, 1f), timeLabel(programme.start), timeLabel(programme.end))
                     // Live without a programme has nothing to measure: the player position there is only the buffer.
                     else -> null
+                }
+                // Without a timeline the sweep runs in the gap under the information instead.
+                Column(Modifier.fillMaxWidth().testTag("player_information").connectingSweep(connecting && timeline == null, below = 3.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Label(programme?.title?.takeIf(String::isNotBlank) ?: player.channel?.name.orEmpty(),
+                        Modifier.fillMaxWidth(.72f).testTag("player_title"), size = 30, bold = true, color = Color.White, maxLines = 2)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        if (archive) Label(stringResource(R.string.ui_player_archive), Modifier.testTag("player_channel_mode"), size = 14, bold = true, color = Peach, maxLines = 1)
+                        else LiveIndicator(stringResource(R.string.ui_player_live), Modifier.testTag("player_channel_mode"), size = 14, color = LiveOnVideo)
+                        if (archive) programme?.let { Label("${timeLabel(it.start)}–${timeLabel(it.end)}", size = 14, color = Color.White.copy(alpha = .85f), maxLines = 1) }
+                        if (connecting) Label("Подключение…", Modifier.testTag("player_connecting"), size = 14, color = Color.White.copy(alpha = .85f), maxLines = 1)
+                        // Only the live view says what is next, and only while the current programme is ending.
+                        val next = state.announcedNext(programme)
+                        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
+                            if (next != null) Label("Далее в ${timeLabel(next.start)} · ${next.title}", Modifier.testTag("player_next_programme"),
+                                size = 14, color = Color.White.copy(alpha = .75f), maxLines = 1)
+                        }
+                    }
                 }
                 val interactive = LocalUiInteractive.current
                 if (timeline != null) key(player.request, programme?.id) {
@@ -266,7 +289,7 @@ private fun PlayerControls(state: UiState, progress: StateFlow<PlaybackState>?, 
                                     else -> false
                                 } else event.key in listOf(Key.DirectionLeft, Key.DirectionRight, Key.DirectionCenter, Key.Enter)
                             }.semantics { contentDescription = "Позиция воспроизведения"; if (!interactive) disabled() }
-                            .focusable(interactive && canSeek), focused = timelineFocused, draft = draftPosition != null)
+                            .focusable(interactive && canSeek), focused = timelineFocused, draft = draftPosition != null, connecting = connecting)
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -316,11 +339,31 @@ private fun PlayerButton(icon: ImageVector, label: String, modifier: Modifier = 
         if (showLabel) Label(label, if (labelled) Modifier else Modifier.clearAndSetSemantics { }, size = 15, bold = true, color = foreground, maxLines = 1)
     }
 }
+/**
+ * A highlight running along the element while a stream is being opened: over the track of a timeline, or
+ * as a thin line [below] an element that has none. Drawn over the content and read only while drawing.
+ */
+@Composable
+private fun Modifier.connectingSweep(active: Boolean, below: Dp? = null): Modifier {
+    if (!active || !LocalMotionEnabled.current) return this
+    val turn = rememberInfiniteTransition(label = "connecting").animateFloat(0f, 1f,
+        infiniteRepeatable(tween(1_200, easing = LinearEasing)), label = "sweep")
+    val accent = LocalPalette.current.accentBright
+    return drawWithContent {
+        drawContent()
+        val width = size.width * .28f
+        val start = -width + (size.width + width) * turn.value
+        val left = start.coerceAtLeast(0f)
+        val right = (start + width).coerceAtMost(size.width)
+        if (below == null) drawRect(Color.White, Offset(left, 0f), Size(right - left, size.height), alpha = .55f)
+        else drawRoundRect(accent, Offset(left, size.height + below.toPx()), Size(right - left, 3.dp.toPx()), CornerRadius(1.5.dp.toPx()))
+    }
+}
 private fun durationLabel(ms: Long): String { val seconds = (ms / 1000).coerceAtLeast(0); return "%d:%02d".format(seconds / 60, seconds % 60) }
 
 /** Programme start and end flank the track; the current time rides above the thumb. */
 @Composable
-internal fun ProgrammeTimeline(fraction: Float, start: String, end: String, position: String, modifier: Modifier = Modifier, focused: Boolean = false, draft: Boolean = false) {
+internal fun ProgrammeTimeline(fraction: Float, start: String, end: String, position: String, modifier: Modifier = Modifier, focused: Boolean = false, draft: Boolean = false, connecting: Boolean = false) {
     val progress by animateFloatAsState(fraction.coerceIn(0f, 1f), tween(motionDuration(200)), label = "programme position")
     val density = LocalDensity.current
     val accent = LocalPalette.current.accentBright
@@ -340,7 +383,7 @@ internal fun ProgrammeTimeline(fraction: Float, start: String, end: String, posi
             }
             BoxWithConstraints(Modifier.fillMaxWidth().height(20.dp)) {
                 Box(Modifier.padding(horizontal = thumb / 2).fillMaxWidth().height(6.dp).align(Alignment.Center).clip(RoundedCornerShape(50))
-                    .background(Color.White.copy(alpha = .24f)).testTag("programme_progress")) {
+                    .background(Color.White.copy(alpha = .24f)).connectingSweep(connecting).testTag("programme_progress")) {
                     Box(Modifier.fillMaxWidth(progress).fillMaxHeight().background(accent).testTag("programme_progress_fill"))
                 }
                 Box(Modifier.align(Alignment.CenterStart).offset { IntOffset(((maxWidth - thumb).toPx() * progress).toInt(), 0) }.size(thumb).clip(CircleShape).background(Color.White).testTag("programme_progress_dot"))

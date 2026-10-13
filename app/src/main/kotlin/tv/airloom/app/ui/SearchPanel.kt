@@ -101,7 +101,6 @@ internal fun SearchPanel(state: UiState, actions: UiActions, open: Boolean, voic
     }
     val highlight = if (blank) "" else query
     val empty = live.isEmpty() && archive.isEmpty()
-    val showSkeleton = delayedLoading(loading && empty)
     val searching = delayedLoading(loading && !empty)
     val rowHeight = when (state.settings.density) { 0 -> 48; 2 -> 66; else -> 56 }
     val numbered = remember(live, archive) { live.any { it.channel.number > 0 } || archive.any { it.first.number > 0 } }
@@ -184,7 +183,7 @@ internal fun SearchPanel(state: UiState, actions: UiActions, open: Boolean, voic
                     when {
                         blank && live.isEmpty() -> item(key = "prompt") { SearchNote(stringResource(R.string.ui_search_prompt), "Наберите название канала или передачи. Справа от поля — голосовой поиск.") }
                         !blank && state.searchLoad.phase == LoadPhase.ERROR -> item(key = "error") { RetryLoad(stringResource(R.string.ui_search_failed)) { actions.search(query) } }
-                        !blank && empty && loading -> { if (showSkeleton) item(key = "skeleton") { SkeletonRows(count = 5, height = rowHeight) } }
+                        !blank && empty && loading -> item(key = "skeleton") { SkeletonRows(count = 6, height = rowHeight, numbered = true) }
                         !blank && empty -> item(key = "none") { SearchNote(stringResource(R.string.ui_search_no_results), "Попробуйте другое название или обновите телепрограмму.") }
                         else -> {
                             items(entries, key = { it.key }, contentType = { it::class }) { entry ->

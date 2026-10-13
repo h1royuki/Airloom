@@ -3,11 +3,15 @@ package tv.airloom.app.ui
 import androidx.compose.ui.res.stringResource
 import tv.airloom.app.R
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -23,6 +27,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusProperties
@@ -45,7 +51,9 @@ import tv.airloom.core.label
 internal fun ChannelsScreen(state: UiState, actions: UiActions, overlay: Boolean = false) {
     val interactive = LocalUiInteractive.current
     val rows = state.channels
-    val showSkeleton = delayedLoading(state.channelLoad.phase == LoadPhase.LOADING)
+    val loading = state.channelLoad.phase == LoadPhase.LOADING
+    // The section has changed and its list is still being built: the rows on screen belong to the previous one.
+    val stale = state.listedSelection != null && state.listedSelection != state.channelSelection
     val focusedId = state.focusedChannel?.id
     val selected = remember(rows, focusedId) { focusedId?.let { id -> rows.firstOrNull { it.id == id } } ?: rows.firstOrNull() }
     val listState = rememberLazyListState()
@@ -111,25 +119,40 @@ internal fun ChannelsScreen(state: UiState, actions: UiActions, overlay: Boolean
     val playlistLocations = remember(state.playlists) { state.playlists.associate { it.id to it.location } }
     val rowHeight = when (state.settings.density) { 0 -> 48; 2 -> 66; else -> 56 }
     val numbered = remember(rows) { rows.any { it.number > 0 } }
+    // A replaced list arrives as a cascade: a new value per list, at zero in the very composition that brings
+    // the rows, so they are never drawn before their entrance. A screen that opens with its list in place has none.
+    val settled = remember { booleanArrayOf(rows.isNotEmpty()) }
+    val stageSettled = remember { booleanArrayOf(selected != null) }
+    val entrance = remember(state.listedSelection ?: state.channelSelection, state.selectedPlaylistId, rows.isNotEmpty()) {
+        Animatable(if (settled[0] || rows.isEmpty()) 1f else 0f).also { settled[0] = false }
+    }
+    val cascadeDuration = motionDuration(Motion.Enter + Motion.Stagger * (Motion.StaggerRows - 1))
+    LaunchedEffect(entrance) { if (entrance.value < 1f) entrance.animateTo(1f, tween(cascadeDuration, easing = LinearEasing)) }
+    // Stale rows and the stage step back until the new list is ready. Read only while drawing.
+    val presence = animateFloatAsState(if (stale) .3f else 1f, tween(motionDuration(100)), label = "stale list")
+    val dimmed = remember(presence) { Modifier.graphicsLayer { alpha = presence.value } }
     NavigationLayout(state, actions, translucent = overlay) {
         Column(Modifier.width(336.dp).fillMaxHeight().padding(start = 16.dp, top = SafeVertical, bottom = SafeVertical)) {
             Row(Modifier.fillMaxWidth().heightIn(min = 32.dp).padding(horizontal = 12.dp).testTag("channels_header"),
                 horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                 Label(state.channelSelection.label, Modifier.weight(1f), size = 22, bold = true, maxLines = 1)
-                if (rows.isNotEmpty()) Label(rows.size.toString(), Modifier.clearAndSetSemantics { }, size = 12, color = Muted, maxLines = 1)
+                // In the header, not in the column: a refresh must not push the rows down.
+                if (state.channelLoad.refreshing || state.busy) LoadingIndicator(Modifier.size(16.dp))
+                if (rows.isNotEmpty() && !stale) Label(rows.size.toString(), Modifier.clearAndSetSemantics { }, size = 12, color = Muted, maxLines = 1)
             }
             Spacer(Modifier.height(8.dp))
             if (state.movingChannelId != null) MoveHint(state.moveSaving)
-            if (state.channelLoad.refreshing || state.busy) LoadingIndicator(Modifier.size(20.dp))
-            if (showSkeleton) SkeletonRows(height = rowHeight)
             if (state.channelLoad.phase == LoadPhase.ERROR) RetryLoad(stringResource(R.string.ui_channels_load_failed), actions::retryCatalogue)
-            if (rows.isEmpty() && state.channelLoad.phase == LoadPhase.READY) {
+            if (rows.isEmpty() && !stale && state.channelLoad.phase == LoadPhase.READY) {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Label("Список пуст", size = 16, color = Muted, maxLines = 1)
                     Label(if (recent) "Открытые каналы появятся здесь." else "Выберите другую категорию.", size = 12, color = Muted, maxLines = 3)
                 }
             }
-            ChannelList(Modifier.weight(1f).fillMaxWidth(), rows, state.programmes, state.now, state.epgLoad.phase == LoadPhase.READY, numbered,
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+            Box(Modifier.fillMaxSize().then(dimmed)) {
+            ChannelList(Modifier.fillMaxSize(), rows, state.programmes, state.now, state.epgLoad.phase == LoadPhase.READY,
+                state.epgLoad.phase == LoadPhase.ERROR, state.epgAnswered, entrance.asState(), numbered,
                 selectedId = selected?.id, playingId = state.player.channel?.id, movingId = state.movingChannelId, moveSaving = state.moveSaving,
                 menuChannelId = menuChannelId, pinnedIds = pinnedIds, recent = recent, logos = state.settings.logos, rowHeight = rowHeight,
                 playlistLocations = playlistLocations, listState = listState, initialFocus = initialFocus, programmeEntry = programmeEntry,
@@ -137,11 +160,17 @@ internal fun ChannelsScreen(state: UiState, actions: UiActions, overlay: Boolean
                 actions = actions, onRowFocused = { contentFocused = false }, onMenu = { menuChannelId = it },
                 onMenuClosed = { menuChannelId = null; restoreFocus++ },
                 onHide = { channel, neighbour -> menuChannelId = null; hiding = channel to neighbour })
+            }
+            // The skeleton fills the list's viewport and dissolves into the rows that take its place.
+            FadingPresence(loading || stale && rows.isEmpty(), Modifier.fillMaxSize().clipToBounds()) {
+                SkeletonRows(12, rowHeight, numbered = true, Modifier.wrapContentHeight(Alignment.Top, unbounded = true))
+            }
+            }
             if (rows.isNotEmpty() && state.movingChannelId == null)
                 RemoteHints("OK долго" to "действия", "Назад" to "меню", modifier = Modifier.padding(start = 12.dp, top = 10.dp).clearAndSetSemantics { })
         }
         Box(Modifier.weight(1f).fillMaxHeight().padding(start = 24.dp, end = SafeHorizontal, top = SafeVertical, bottom = SafeVertical)) {
-            if (selected == null && state.channelLoad.phase == LoadPhase.READY) {
+            if (selected == null && !loading && !stale && state.channelLoad.phase == LoadPhase.READY) {
                 Column(Modifier.fillMaxSize().padding(28.dp).testTag("channels_empty_details"),
                     horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterVertically)) {
                     Icon(if (recent) Icons.Outlined.History else Icons.Outlined.Tv,
@@ -158,32 +187,45 @@ internal fun ChannelsScreen(state: UiState, actions: UiActions, overlay: Boolean
                     ?: remember(selected.id, today, viewport, state.epgLoad) {
                         ProgrammeBrowserState(channelId = selected.id, loadedDate = today, programmes = viewport, load = state.epgLoad)
                     }
+                // Another channel's stage comes up from half tone instead of being swapped at full strength.
+                val arrival = remember(selected.id) { Animatable(if (stageSettled[0]) 1f else .55f).also { stageSettled[0] = false } }
+                val arrivalDuration = motionDuration(Motion.Swap)
+                LaunchedEffect(arrival) { if (arrival.value < 1f) arrival.animateTo(1f, tween(arrivalDuration)) }
+                Box(Modifier.fillMaxSize().then(remember(arrival, presence) { Modifier.graphicsLayer { alpha = arrival.value * presence.value } })) {
                 ChannelProgrammePanel(selected, browser, state.now, state.settings.preview, playlistLocations[selected.playlistId], actions,
                     restoreContentFocus = contentFocused, entryFocus = programmeEntry,
                     onContentFocus = { contentFocused = true },
                     returnToChannel = { contentFocused = false; initialFocus.requestFocus() })
+                }
             }
+            // Until there is a channel to show, the stage holds its own outline instead of standing empty.
+            FadingPresence(selected == null && (loading || stale), Modifier.fillMaxSize()) { StageSkeleton() }
         }
     }
 }
 
 @Composable
 private fun ChannelList(
-    modifier: Modifier, rows: List<Channel>, programmes: Map<String, List<Programme>>, now: Long, epgReady: Boolean, numbered: Boolean,
+    modifier: Modifier, rows: List<Channel>, programmes: Map<String, List<Programme>>, now: Long, epgReady: Boolean, epgFailed: Boolean,
+    epgAnswered: Set<String>?, entrance: State<Float>, numbered: Boolean,
     selectedId: String?, playingId: String?, movingId: String?, moveSaving: Boolean, menuChannelId: String?,
     pinnedIds: Set<String>, recent: Boolean, logos: Boolean, rowHeight: Int, playlistLocations: Map<String, String>,
     listState: LazyListState, initialFocus: FocusRequester, programmeEntry: FocusRequester, neighbourId: String?, neighbourFocus: FocusRequester,
     actions: UiActions, onRowFocused: () -> Unit, onMenu: (String) -> Unit, onMenuClosed: () -> Unit, onHide: (Channel, Channel?) -> Unit,
 ) {
     LazyColumn(state = listState, modifier = modifier.testTag("channels_list"), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        items(rows, key = Channel::id) { channel ->
+        itemsIndexed(rows, key = { _, channel -> channel.id }) { index, channel ->
             val current = programmes[channel.id]?.firstOrNull { it.start <= now && it.end > now }
             // Whole percents: the clock tick redraws a row only when its bar actually moves.
             val progress = current?.let { ((now - it.start) * 100 / (it.end - it.start).coerceAtLeast(1)).toInt().coerceIn(0, 100) }
             val pinned = channel.id in pinnedIds
-            Box(Modifier.fillMaxWidth().animateItem(fadeInSpec = null, fadeOutSpec = null, placementSpec = androidx.compose.animation.core.tween(motionDuration(150)))) {
+            // "Нет программы" is a verdict: it needs an answer for this very channel. Until then the row shows a placeholder.
+            val answered = epgReady && (epgAnswered == null || channel.id in epgAnswered)
+            val slot = remember(entrance, index, listState) { Modifier.cascade(entrance) { index - listState.firstVisibleItemIndex } }
+            Box(Modifier.fillMaxWidth().animateItem(fadeInSpec = null, fadeOutSpec = null, placementSpec = androidx.compose.animation.core.tween(motionDuration(150))).then(slot)) {
                 // A row with a programme does not depend on the loading phase and is not redrawn when it flips.
-                ChannelRow(channel, current, progress, numbered, epgReady || current != null, selected = channel.id == selectedId, playing = channel.id == playingId,
+                ChannelRow(channel, current, progress, numbered, answered || current != null, pending = current == null && !answered && !epgFailed,
+                    selected = channel.id == selectedId, playing = channel.id == playingId,
                     moving = movingId == channel.id, moveSaving = moveSaving, pinned = pinned, logos = logos, height = rowHeight,
                     playlistLocation = playlistLocations[channel.playlistId], initialFocus = initialFocus, programmeEntry = programmeEntry,
                     neighbourFocus = neighbourFocus.takeIf { channel.id == neighbourId }, actions = actions, onFocused = onRowFocused, onMenu = onMenu)
@@ -205,7 +247,7 @@ private fun ChannelList(
 
 @Composable
 private fun ChannelRow(
-    channel: Channel, programme: Programme?, progress: Int?, numbered: Boolean, epgReady: Boolean, selected: Boolean, playing: Boolean, moving: Boolean,
+    channel: Channel, programme: Programme?, progress: Int?, numbered: Boolean, epgReady: Boolean, pending: Boolean, selected: Boolean, playing: Boolean, moving: Boolean,
     moveSaving: Boolean, pinned: Boolean, logos: Boolean, height: Int, playlistLocation: String?,
     initialFocus: FocusRequester, programmeEntry: FocusRequester, neighbourFocus: FocusRequester?, actions: UiActions, onFocused: () -> Unit, onMenu: (String) -> Unit,
 ) {
@@ -244,7 +286,7 @@ private fun ChannelRow(
             onLongClick { if (!moving) onMenu(channel.id); !moving }
         }
         .focusable(interactive).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        ChannelRowBody(channel, programme?.title ?: if (epgReady) "Нет программы" else "", progress, numbered, focused, selected, playing, logos, playlistLocation)
+        ChannelRowBody(channel, programme?.title ?: if (epgReady) "Нет программы" else "", progress, numbered, focused, selected, playing, logos, playlistLocation, pending = pending)
         val mark = if (focused) palette.accentOnFocus else if (selected) palette.onAccentContainer else palette.accent
         if (pinned) Icon(Icons.Outlined.PushPin, "Закреплён", Modifier.size(14.dp), tint = mark)
         if (moving) Label("↕", size = 18, color = mark)
@@ -258,7 +300,7 @@ private fun ChannelRow(
  */
 @Composable
 internal fun RowScope.ChannelRowBody(channel: Channel, programmeTitle: String, progress: Int?, numbered: Boolean, focused: Boolean,
-    selected: Boolean, playing: Boolean, logos: Boolean, playlistLocation: String?, title: String = channel.name, highlight: String = "") {
+    selected: Boolean, playing: Boolean, logos: Boolean, playlistLocation: String?, title: String = channel.name, highlight: String = "", pending: Boolean = false) {
     val palette = LocalPalette.current
     val primary = when { focused -> palette.onFocus; selected -> palette.onAccentContainer; else -> palette.on }
     val secondary = when { focused -> palette.onFocus.copy(alpha = .7f); selected -> palette.onAccentContainer.copy(alpha = .78f); else -> palette.onVariant }
@@ -267,14 +309,17 @@ internal fun RowScope.ChannelRowBody(channel: Channel, programmeTitle: String, p
     ChannelLogo(channel, logos, 16, Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(palette.tile), playlistLocation)
     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
         val titleColor = if (playing && !focused && !selected) palette.accent else primary
-        if (highlight.isEmpty()) {
-            Label(title, size = 15, bold = true, color = titleColor, maxLines = 1)
-            Label(programmeTitle, size = 12, color = secondary, maxLines = 1)
-        } else {
-            Label(remember(title, highlight, accent) { markMatches(title, highlight, accent) }, size = 15, bold = true, color = titleColor, maxLines = 1)
-            Label(remember(programmeTitle, highlight, accent) { markMatches(programmeTitle, highlight, accent) }, size = 12, color = secondary, maxLines = 1)
+        if (highlight.isEmpty()) Label(title, size = 15, bold = true, color = titleColor, maxLines = 1)
+        else Label(remember(title, highlight, accent) { markMatches(title, highlight, accent) }, size = 15, bold = true, color = titleColor, maxLines = 1)
+        // What is on comes in over a placeholder of the same height, so the row neither jumps nor shows a false "nothing on".
+        val reveal = animateFloatAsState(if (pending) 0f else 1f, tween(motionDuration(Motion.Swap)), label = "programme line")
+        if (pending) Box(Modifier.height((14.4f * LocalTextScale.current).dp), contentAlignment = Alignment.CenterStart) {
+            Box(Modifier.fillMaxWidth(.58f).height(8.dp).clip(RoundedCornerShape(4.dp)).background(primary.copy(alpha = .14f)))
+        } else Column(Modifier.graphicsLayer { alpha = reveal.value }, verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            if (highlight.isEmpty()) Label(programmeTitle, size = 12, color = secondary, maxLines = 1)
+            else Label(remember(programmeTitle, highlight, accent) { markMatches(programmeTitle, highlight, accent) }, size = 12, color = secondary, maxLines = 1)
+            if (progress != null) ProgressLine(progress / 100f, Modifier.fillMaxWidth(), track = primary.copy(alpha = .15f), fill = accent)
         }
-        if (progress != null) ProgressLine(progress / 100f, Modifier.fillMaxWidth(), track = primary.copy(alpha = .15f), fill = accent)
     }
     if (playing) Icon(Icons.Outlined.Equalizer, null, Modifier.size(18.dp), tint = accent)
 }
