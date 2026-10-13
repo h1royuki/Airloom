@@ -288,6 +288,71 @@ class ProgrammeBrowserUiTest {
         assertEquals(2, playCalls.get())
         assertTrue(playerState.value.request is PlaybackRequest.Live)
     }
+    @Test fun leftFromTheDateRowReturnsToTheSelectedChannelNotTheLevelRow() {
+        // Enough rows for the list to reach the height of the date row.
+        val filler = (2..12).map { channel.copy(id = "filler$it", name = "Канал $it", number = it) }
+        compose.runOnUiThread { base.replaceChannels(listOf(channel, other) + filler) }
+        compose.waitUntil { model.state.value.channels.size == 13 }
+        val row = compose.onNode(hasContentDescription("Тестовый канал: Передача current") and hasAnyAncestor(hasTestTag("channels_list")))
+        row.assertIsFocused().performKeyInput { pressKey(Key.DirectionRight) }
+        compose.onNodeWithTag("programme_date_picker").assertIsFocused().performKeyInput { pressKey(Key.DirectionLeft) }
+        compose.onNodeWithTag("programme_previous_day").assertIsFocused().performKeyInput { pressKey(Key.DirectionLeft) }
+        row.assertIsFocused()
+        compose.runOnIdle { assertEquals(channel.id, model.state.value.focusedChannel?.id) }
+    }
+    @Test fun leavingThePlayerReturnsToTheChannelWatchedLast() {
+        val row = compose.onNode(hasContentDescription("Тестовый канал: Передача current") and hasAnyAncestor(hasTestTag("channels_list")))
+        row.assertIsFocused().performKeyInput { pressKey(Key.DirectionCenter) }
+        compose.waitUntil { model.state.value.screen == Screen.PLAYER }
+        // The channels screen has left the composition, as it has by the time anyone switches the channel.
+        compose.waitUntil { compose.onAllNodesWithTag("channels_list").fetchSemanticsNodes().isEmpty() }
+        compose.runOnUiThread { model.nextChannel(1) }
+        compose.waitUntil { playerState.value.channel?.id == other.id }
+        compose.runOnUiThread { model.back() }
+        compose.waitUntil { model.state.value.screen == Screen.GUIDE }
+        compose.waitUntil { compose.onAllNodes(hasContentDescription("Другой канал: Передача current") and hasAnyAncestor(hasTestTag("channels_list")) and isFocused()).fetchSemanticsNodes().isNotEmpty() }
+        compose.runOnIdle { assertEquals(other.id, model.state.value.focusedChannel?.id) }
+    }
+    @Test fun typedNumberOpensItsChannelAndAnUnknownOneIsReported() {
+        val row = compose.onNode(hasContentDescription("Тестовый канал: Передача current") and hasAnyAncestor(hasTestTag("channels_list")))
+        row.assertIsFocused().performKeyInput { pressKey(Key.DirectionCenter) }
+        compose.waitUntil { model.state.value.screen == Screen.PLAYER }
+        compose.runOnUiThread { model.channelDigit(1) }
+        compose.runOnIdle { assertEquals(NumberEntry("1", "Другой канал"), model.state.value.numberEntry) }
+        compose.onNodeWithTag("player_channel_number").assertIsDisplayed()
+        compose.runOnUiThread { model.confirmChannelNumber() }
+        compose.waitUntil { playerState.value.channel?.id == other.id }
+        compose.runOnIdle { assertNull(model.state.value.numberEntry) }
+        // An unknown number is confirmed by the pause after its last digit, says so and leaves by itself; the channel stays.
+        compose.runOnUiThread { model.channelDigit(7); model.channelDigit(7) }
+        compose.waitUntil(5_000) { model.state.value.numberEntry == NumberEntry("77", missing = true) }
+        compose.onNodeWithText("Нет такого канала").assertIsDisplayed()
+        compose.waitUntil(5_000) { model.state.value.numberEntry == null }
+        assertEquals(other.id, playerState.value.channel?.id)
+    }
+    @Test fun channelKeysEnterTheListFromAChannelOutsideIt() {
+        val first = channel.copy(id = "sport1", name = "Спорт 1", group = "Спорт", number = 5)
+        val second = first.copy(id = "sport2", name = "Спорт 2", number = 6)
+        compose.runOnUiThread { base.replaceChannels(listOf(channel, other, first, second)) }
+        compose.waitUntil { model.state.value.categories.any { it.name == "Спорт" } }
+        compose.runOnUiThread { model.selectCategory(model.state.value.categories.first { it.name == "Спорт" }) }
+        compose.waitUntil { model.state.value.channels.map { it.id } == listOf("sport1", "sport2") }
+        compose.runOnUiThread { model.play(channel); model.nextChannel(1) }
+        compose.waitUntil { playerState.value.channel?.id == "sport1" }
+    }
+    @Test fun returningFromTheBackgroundKeepsThePlayerAndContinuesTheProgramme() {
+        press("programme_row:early")
+        compose.waitUntil { model.state.value.screen == Screen.PLAYER }
+        val request = playerState.value.request
+        assertEquals("early", (request as PlaybackRequest.Archive).programme.id)
+        compose.runOnUiThread { model.background() }
+        compose.runOnIdle { assertEquals(Screen.PLAYER, model.state.value.screen); assertNull(model.state.value.player.request) }
+        assertNull(playerState.value.request)
+        // The idle player names the channel and waits for an explicit «Смотреть».
+        compose.waitUntil(2_000) { compose.onAllNodes(hasText("Смотреть") and isFocused()).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("Смотреть").performKeyInput { pressKey(Key.DirectionCenter) }
+        compose.waitUntil { playerState.value.request == request }
+    }
     @Test fun epgReplacementPreservesSelectionOrChoosesNearestAndEmptyDayIsSafe() {
         compose.runOnUiThread { model.selectProgrammeDate(today.minusDays(1)) }
         awaitDay(today.minusDays(1))

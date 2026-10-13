@@ -1,7 +1,7 @@
 plugins { alias(libs.plugins.android.application); alias(libs.plugins.kotlin.android); alias(libs.plugins.kotlin.compose); alias(libs.plugins.ksp); alias(libs.plugins.hilt) }
 android {
     namespace = "tv.airloom.app"; compileSdk = 35; buildToolsVersion = "35.0.0"
-    defaultConfig { applicationId = "tv.airloom.app"; minSdk = 26; targetSdk = 35; versionCode = 22; versionName = "0.4.9"; testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner" }
+    defaultConfig { applicationId = "tv.airloom.app"; minSdk = 26; targetSdk = 35; versionCode = 24; versionName = "0.4.11"; testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner" }
     buildFeatures { compose = true; buildConfig = true }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }

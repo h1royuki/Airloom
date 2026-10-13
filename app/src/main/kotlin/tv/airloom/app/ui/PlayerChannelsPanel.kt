@@ -68,8 +68,10 @@ internal fun PlayerChannelsPanel(state: UiState, actions: UiActions, open: Boole
     val playingId = state.player.channel?.id
     // Rows capture plain values, not the whole UI state, so unrelated updates leave the list untouched.
     val archivePlaying = state.player.request is PlaybackRequest.Archive
-    val livePlaying = state.player.request is PlaybackRequest.Live
+    // A failed stream is not playing: choosing its row opens it again.
+    val livePlaying = state.player.request is PlaybackRequest.Live && state.player.error == null
     val showLogos = state.settings.logos
+    val markFavourites = selection != ChannelSelection.Favourites
     val rowHeight = when (state.settings.density) { 0 -> 48; 2 -> 66; else -> 56 }
     val numbered = remember(channels) { channels.any { it.number > 0 } }
     val programmes = state.programmes
@@ -239,7 +241,7 @@ internal fun PlayerChannelsPanel(state: UiState, actions: UiActions, open: Boole
                                 val progress = programme?.let { ((now - it.start) * 100 / (it.end - it.start).coerceAtLeast(1)).toInt().coerceIn(0, 100) }
                                 Box {
                                     PlayerChannelRow(channel, programme?.title, progress, numbered, playing = channel.id == playingId,
-                                        archivePlaying = archivePlaying, showLogos = showLogos, height = rowHeight,
+                                        archivePlaying = archivePlaying, favourite = markFavourites && channel.favourite, showLogos = showLogos, height = rowHeight,
                                         playlistLocation = playlistLocations[channel.playlistId],
                                         modifier = (if (channel.id == focusId) Modifier.focusRequester(rowFocus) else Modifier)
                                             .onFocusChanged { if (it.isFocused) lastChannel[0] = channel.id },
@@ -295,7 +297,7 @@ private fun RailEntry.icon(): ImageVector = when (this) {
 
 /** The same row as the main channel list; the playing channel is marked by the accent, the focus by the light fill. */
 @Composable
-private fun PlayerChannelRow(channel: Channel, programmeTitle: String?, progress: Int?, numbered: Boolean, playing: Boolean, archivePlaying: Boolean,
+private fun PlayerChannelRow(channel: Channel, programmeTitle: String?, progress: Int?, numbered: Boolean, playing: Boolean, archivePlaying: Boolean, favourite: Boolean,
     showLogos: Boolean, height: Int, playlistLocation: String?, modifier: Modifier, onMenu: () -> Unit, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     val interactive = LocalUiInteractive.current
@@ -313,7 +315,7 @@ private fun PlayerChannelRow(channel: Channel, programmeTitle: String?, progress
         }
         .focusable(interactive).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        ChannelRowBody(channel, programmeTitle ?: "Нет программы", progress, numbered, focused, selected = playing, playing = playing, logos = showLogos, playlistLocation = playlistLocation)
+        ChannelRowBody(channel, programmeTitle ?: "Нет программы", progress, numbered, focused, selected = playing, playing = playing, logos = showLogos, playlistLocation = playlistLocation, favourite = favourite)
         if (playing && archivePlaying) Label("Архив", Modifier.clearAndSetSemantics { }, size = 12, color = if (focused) palette.onFocus else palette.archive, maxLines = 1)
     }
 }

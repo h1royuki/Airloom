@@ -375,6 +375,8 @@ class OnboardingUiTest {
         compose.onNodeWithText("Проверить и загрузить каналы").performScrollTo().performSemanticsAction(SemanticsActions.OnClick) { it() }
         compose.waitUntil(10_000) { !model.state.value.busy && model.state.value.importResult?.channels == 1 }
         compose.onNodeWithText("Далее").performScrollTo().performSemanticsAction(SemanticsActions.OnClick) { it() }
+        // The step opens on loading the programme; skipping it takes a deliberate move.
+        compose.waitUntil(2_000) { compose.onAllNodes(hasText("Загрузить EPG") and isFocused()).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("Пропустить").performScrollTo().performSemanticsAction(SemanticsActions.OnClick) { it() }
         compose.onNodeWithText("Далее").performScrollTo().performSemanticsAction(SemanticsActions.OnClick) { it() }
         compose.onNodeWithText("Открыть каналы").performScrollTo().performSemanticsAction(SemanticsActions.OnClick) { it() }

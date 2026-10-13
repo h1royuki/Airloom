@@ -20,6 +20,7 @@ import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Equalizer
+import androidx.compose.material.icons.outlined.Favorite
 import androidx.compose.material.icons.outlined.Tv
 import androidx.tv.material3.Icon
 import androidx.compose.runtime.*
@@ -112,6 +113,8 @@ internal fun ChannelsScreen(state: UiState, actions: UiActions, overlay: Boolean
     }
     // Rows receive only what they draw, so a state change redraws the rows it actually affects.
     val recent = state.channelSelection == tv.airloom.core.ChannelSelection.Recent
+    // In the favourites every row is one: the mark would say nothing there.
+    val markFavourites = state.channelSelection != tv.airloom.core.ChannelSelection.Favourites
     val preferencesCurrent = state.channelListScope() == state.channelPreferenceScope
     val pinnedIds = remember(state.channelListPreferences, preferencesCurrent) {
         if (preferencesCurrent) state.channelListPreferences.filter { it.pinned }.mapTo(HashSet()) { it.channelId } else emptySet()
@@ -154,7 +157,7 @@ internal fun ChannelsScreen(state: UiState, actions: UiActions, overlay: Boolean
             ChannelList(Modifier.fillMaxSize(), rows, state.programmes, state.now, state.epgLoad.phase == LoadPhase.READY,
                 state.epgLoad.phase == LoadPhase.ERROR, state.epgAnswered, entrance.asState(), numbered,
                 selectedId = selected?.id, playingId = state.player.channel?.id, movingId = state.movingChannelId, moveSaving = state.moveSaving,
-                menuChannelId = menuChannelId, pinnedIds = pinnedIds, recent = recent, logos = state.settings.logos, rowHeight = rowHeight,
+                menuChannelId = menuChannelId, pinnedIds = pinnedIds, recent = recent, markFavourites = markFavourites, logos = state.settings.logos, rowHeight = rowHeight,
                 playlistLocations = playlistLocations, listState = listState, initialFocus = initialFocus, programmeEntry = programmeEntry,
                 neighbourId = hiding?.second?.id, neighbourFocus = neighbourFocus,
                 actions = actions, onRowFocused = { contentFocused = false }, onMenu = { menuChannelId = it },
@@ -209,7 +212,7 @@ private fun ChannelList(
     modifier: Modifier, rows: List<Channel>, programmes: Map<String, List<Programme>>, now: Long, epgReady: Boolean, epgFailed: Boolean,
     epgAnswered: Set<String>?, entrance: State<Float>, numbered: Boolean,
     selectedId: String?, playingId: String?, movingId: String?, moveSaving: Boolean, menuChannelId: String?,
-    pinnedIds: Set<String>, recent: Boolean, logos: Boolean, rowHeight: Int, playlistLocations: Map<String, String>,
+    pinnedIds: Set<String>, recent: Boolean, markFavourites: Boolean, logos: Boolean, rowHeight: Int, playlistLocations: Map<String, String>,
     listState: LazyListState, initialFocus: FocusRequester, programmeEntry: FocusRequester, neighbourId: String?, neighbourFocus: FocusRequester,
     actions: UiActions, onRowFocused: () -> Unit, onMenu: (String) -> Unit, onMenuClosed: () -> Unit, onHide: (Channel, Channel?) -> Unit,
 ) {
@@ -226,7 +229,7 @@ private fun ChannelList(
                 // A row with a programme does not depend on the loading phase and is not redrawn when it flips.
                 ChannelRow(channel, current, progress, numbered, answered || current != null, pending = current == null && !answered && !epgFailed,
                     selected = channel.id == selectedId, playing = channel.id == playingId,
-                    moving = movingId == channel.id, moveSaving = moveSaving, pinned = pinned, logos = logos, height = rowHeight,
+                    moving = movingId == channel.id, moveSaving = moveSaving, pinned = pinned, favourite = markFavourites && channel.favourite, logos = logos, height = rowHeight,
                     playlistLocation = playlistLocations[channel.playlistId], initialFocus = initialFocus, programmeEntry = programmeEntry,
                     neighbourFocus = neighbourFocus.takeIf { channel.id == neighbourId }, actions = actions, onFocused = onRowFocused, onMenu = onMenu)
                 if (menuChannelId == channel.id) {
@@ -248,7 +251,7 @@ private fun ChannelList(
 @Composable
 private fun ChannelRow(
     channel: Channel, programme: Programme?, progress: Int?, numbered: Boolean, epgReady: Boolean, pending: Boolean, selected: Boolean, playing: Boolean, moving: Boolean,
-    moveSaving: Boolean, pinned: Boolean, logos: Boolean, height: Int, playlistLocation: String?,
+    moveSaving: Boolean, pinned: Boolean, favourite: Boolean, logos: Boolean, height: Int, playlistLocation: String?,
     initialFocus: FocusRequester, programmeEntry: FocusRequester, neighbourFocus: FocusRequester?, actions: UiActions, onFocused: () -> Unit, onMenu: (String) -> Unit,
 ) {
     val interactive = LocalUiInteractive.current
@@ -286,7 +289,7 @@ private fun ChannelRow(
             onLongClick { if (!moving) onMenu(channel.id); !moving }
         }
         .focusable(interactive).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        ChannelRowBody(channel, programme?.title ?: if (epgReady) "Нет программы" else "", progress, numbered, focused, selected, playing, logos, playlistLocation, pending = pending)
+        ChannelRowBody(channel, programme?.title ?: if (epgReady) "Нет программы" else "", progress, numbered, focused, selected, playing, logos, playlistLocation, pending = pending, favourite = favourite)
         val mark = if (focused) palette.accentOnFocus else if (selected) palette.onAccentContainer else palette.accent
         if (pinned) Icon(Icons.Outlined.PushPin, "Закреплён", Modifier.size(14.dp), tint = mark)
         if (moving) Label("↕", size = 18, color = mark)
@@ -297,10 +300,12 @@ private fun ChannelRow(
  * What a channel row draws, shared by the main list, the player panel and search: number, logo, name,
  * what is on and how far along it is. It takes plain values only, so a row is redrawn when one of them changes.
  * Search sets [title] to a programme for archive rows and marks [highlight] in both lines.
+ * A favourite carries a small heart, except where [favourite] is switched off because the whole list is favourites.
  */
 @Composable
 internal fun RowScope.ChannelRowBody(channel: Channel, programmeTitle: String, progress: Int?, numbered: Boolean, focused: Boolean,
-    selected: Boolean, playing: Boolean, logos: Boolean, playlistLocation: String?, title: String = channel.name, highlight: String = "", pending: Boolean = false) {
+    selected: Boolean, playing: Boolean, logos: Boolean, playlistLocation: String?, title: String = channel.name, highlight: String = "", pending: Boolean = false,
+    favourite: Boolean = channel.favourite) {
     val palette = LocalPalette.current
     val primary = when { focused -> palette.onFocus; selected -> palette.onAccentContainer; else -> palette.on }
     val secondary = when { focused -> palette.onFocus.copy(alpha = .7f); selected -> palette.onAccentContainer.copy(alpha = .78f); else -> palette.onVariant }
@@ -321,6 +326,7 @@ internal fun RowScope.ChannelRowBody(channel: Channel, programmeTitle: String, p
             if (progress != null) ProgressLine(progress / 100f, Modifier.fillMaxWidth(), track = primary.copy(alpha = .15f), fill = accent)
         }
     }
+    if (favourite) Icon(Icons.Outlined.Favorite, "В избранном", Modifier.size(14.dp), tint = accent)
     if (playing) Icon(Icons.Outlined.Equalizer, null, Modifier.size(18.dp), tint = accent)
 }
 

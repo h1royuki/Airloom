@@ -108,16 +108,20 @@ internal fun OnboardingScreen(state: OnboardingState, settings: AppSettings, res
                     ProviderDomainPicker("epg", "Домен EPG", state.provider.epgOrigin,
                         { callbacks.change(state.copy(provider = state.provider.copy(epgOrigin = it))) }, inheritedLabel = "Основной домен", enabled = !busy)
                     Label("Если основной домен не отдаёт EPG, укажите здесь iptv.online.", size = 11, color = Muted)
+                    val loaded = (result?.programmes ?: 0) > 0
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        TvAction("Загрузить EPG", enabled = !busy, onClick = callbacks.importEpg)
+                        // The step opens on its own action; skipping it is a deliberate move away.
+                        if (!busy && !loaded) InitialFocus { TvAction("Загрузить EPG", it, onClick = callbacks.importEpg) }
+                        else TvAction("Загрузить EPG", enabled = !busy, onClick = callbacks.importEpg)
                     }
                     if (busy) ProgressPanel(progress)
-                    if (!busy && (result?.programmes ?: 0) > 0) Label("Загружено ${result?.programmes} передач · сопоставлено ${result?.matchedChannels} каналов", color = LocalAccent.current, size = 14)
+                    if (!busy && loaded) Label("Загружено ${result?.programmes} передач · сопоставлено ${result?.matchedChannels} каналов", color = LocalAccent.current, size = 14)
                     Label(stringResource(R.string.ui_wizard_skip_epg_hint), size = 12, color = Muted)
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         TvAction(stringResource(R.string.ui_back), enabled = !busy) { callbacks.change(state.copy(step = 2)) }
-                        if (busy) TvAction(stringResource(R.string.ui_cancel), onClick = callbacks.cancel)
-                        else InitialFocus { TvAction(if ((result?.programmes ?: 0) > 0) "Далее" else "Пропустить", it) { if ((result?.programmes ?: 0) > 0) callbacks.change(state.copy(step = 4)) else callbacks.skipEpg() } }
+                        if (busy) InitialFocus { TvAction(stringResource(R.string.ui_cancel), it, onClick = callbacks.cancel) }
+                        else if (loaded) InitialFocus { TvAction("Далее", it) { callbacks.change(state.copy(step = 4)) } }
+                        else TvAction("Пропустить", onClick = callbacks.skipEpg)
                     }
                 }
                 4 -> {

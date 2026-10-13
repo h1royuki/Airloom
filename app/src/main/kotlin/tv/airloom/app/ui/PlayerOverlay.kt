@@ -47,6 +47,8 @@ import kotlinx.coroutines.delay
 import tv.airloom.app.*
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.flow.StateFlow
+import tv.airloom.core.CatchupResolver
+import tv.airloom.core.CatchupResult
 import tv.airloom.core.PlaybackRequest
 import tv.airloom.core.Programme
 import tv.airloom.playback.PlaybackState
@@ -61,6 +63,8 @@ fun AirloomPlayerOverlay(state: UiState, actions: UiActions, progress: StateFlow
     var videoFocused by remember { mutableStateOf(false) }
     val timelineFocusedState = remember { mutableStateOf(false) }
     val timelineFocused by timelineFocusedState
+    // A choice opened from the controls, such as the audio tracks: the controls wait under it.
+    val menuState = remember { mutableStateOf(false) }
     val draftState = remember(state.player.request) { mutableStateOf<Long?>(null) }
     var draftPosition by draftState
     val programme = (state.player.request as? PlaybackRequest.Archive)?.programme
@@ -70,14 +74,15 @@ fun AirloomPlayerOverlay(state: UiState, actions: UiActions, progress: StateFlow
     val timelineFocus = remember { FocusRequester() }
     LaunchedEffect(state.playerControls, state.quickChannels) {
         draftPosition = null
-        if (!state.playerControls && !state.quickChannels) { withFrameNanos { }; runCatching { videoFocus.requestFocus() } }
+        // An error card takes the focus itself.
+        if (!state.playerControls && !state.quickChannels) { if (state.player.error == null) { withFrameNanos { }; runCatching { videoFocus.requestFocus() } } }
         else if (state.playerControls && !state.quickChannels && state.player.request != null) {
             withFrameNanos { }; runCatching { playFocus.requestFocus() }
         }
     }
     LaunchedEffect(state.playerControls, state.settings.playerControlsSeconds, state.quickChannels,
-        state.player.error, state.player.isPlaying, state.player.isBuffering, timelineFocused, interactionToken) {
-        if (state.playerControls && state.player.request != null && UiPolicies.autoHide(state.player.isPlaying, state.player.isBuffering, state.quickChannels, timelineFocused, state.player.error != null) && state.settings.playerControlsSeconds > 0) {
+        state.player.error, state.player.isPlaying, state.player.isBuffering, timelineFocused, menuState.value, interactionToken) {
+        if (state.playerControls && state.player.request != null && !menuState.value && UiPolicies.autoHide(state.player.isPlaying, state.player.isBuffering, state.quickChannels, timelineFocused, state.player.error != null) && state.settings.playerControlsSeconds > 0) {
             delay(state.settings.playerControlsSeconds * 1_000L)
             actions.showPlayerControls(false)
         }
@@ -88,11 +93,14 @@ fun AirloomPlayerOverlay(state: UiState, actions: UiActions, progress: StateFlow
             else -> actions.showPlayerControls(false)
         }
     }
+    // A number being typed is dropped first.
+    androidx.activity.compose.BackHandler(enabled = state.numberEntry != null) { actions.cancelChannelNumber() }
     AirloomTheme(accent = state.settings.accent.color(), textScale = listOf(.9f, 1f, 1.15f)[state.settings.textSize.coerceIn(0, 2)]) {
         // Opening a stream is shown by the controls themselves. The spinner is for a stall in a stream that
         // was already playing, where a short one passes unnoticed, and for opening with the controls hidden.
         val connecting = state.player.isBuffering && !state.player.hasRenderedFrame
         val controlsShown = state.playerControls && state.player.request != null && state.player.error == null && !state.quickChannels
+        val seekable = state.player.request is PlaybackRequest.Archive && state.player.isSeekable
         val buffering = delayedLoading(state.player.isBuffering && !(connecting && controlsShown), if (state.player.hasRenderedFrame) 500 else 150)
         // The idle frame comes up with the screen, settling from slightly larger. Read only while drawing.
         val opening = remember { Animatable(0f) }
@@ -100,19 +108,40 @@ fun AirloomPlayerOverlay(state: UiState, actions: UiActions, progress: StateFlow
         LaunchedEffect(Unit) { opening.animateTo(1f, tween(openingDuration, easing = Motion.Decelerate)) }
         Box(Modifier.fillMaxSize().focusRequester(videoFocus).onFocusChanged { videoFocused = it.isFocused }
             .onPreviewKeyEvent { event ->
-                if (state.quickChannels || event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                interactionToken++
+                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                // The channel keys step through the list whatever is open, the channel card included.
                 when (event.key) {
-                    Key.ChannelUp -> { actions.nextChannel(1); true }
-                    Key.ChannelDown -> { actions.nextChannel(-1); true }
-                    Key.DirectionUp, Key.DirectionDown -> if (videoFocused && !state.playerControls && state.player.error == null) { actions.showQuickChannels(true); true } else false
-                    Key.DirectionCenter, Key.Enter -> if (videoFocused && !state.playerControls && state.player.error == null) { actions.showPlayerControls(true); true } else false
+                    Key.ChannelUp, Key.MediaNext -> { actions.nextChannel(1); return@onPreviewKeyEvent true }
+                    Key.ChannelDown, Key.MediaPrevious -> { actions.nextChannel(-1); return@onPreviewKeyEvent true }
+                }
+                if (state.quickChannels) return@onPreviewKeyEvent false
+                interactionToken++
+                event.key.digit()?.let { actions.channelDigit(it); return@onPreviewKeyEvent true }
+                val bare = videoFocused && !state.playerControls && state.player.error == null
+                val playing = state.player.playWhenReady || state.player.isPlaying
+                when (event.key) {
+                    // OK opens the typed number at once instead of waiting for the pause after the last digit.
+                    Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> if (state.numberEntry != null) { actions.confirmChannelNumber(); true }
+                        else if (bare && event.key != Key.NumPadEnter) { actions.showPlayerControls(true); true } else false
+                    // The controls do not stand between the remote and the channels: ↓ from the buttons opens them,
+                    // and so does ↑ wherever nothing is above the focus. In the archive ↑ from the buttons leads to the timeline.
+                    Key.DirectionDown -> if (bare || controlsShown && !timelineFocused) { actions.showQuickChannels(true); true } else false
+                    Key.DirectionUp -> if (bare || controlsShown && (timelineFocused || !seekable)) { actions.showQuickChannels(true); true } else false
                     // Only the archive steps with the arrows: a live stream's seek window is just its buffer.
-                    Key.DirectionLeft, Key.DirectionRight -> if (videoFocused && !state.playerControls && state.player.error == null
-                        && state.player.request is PlaybackRequest.Archive && state.player.isSeekable) {
+                    Key.DirectionLeft, Key.DirectionRight -> if (bare && seekable) {
                         actions.playerSeek(if (event.key == Key.DirectionLeft) -10_000 else 10_000); true
                     } else false
                     Key.MediaPlayPause -> { actions.playerTogglePause(); true }
+                    Key.MediaPlay -> { if (!playing) actions.playerTogglePause(); true }
+                    Key.MediaPause -> { if (playing && state.player.request != null) actions.playerTogglePause(); true }
+                    Key.MediaStop -> { actions.back(); true }
+                    // The remote's own rewind keys step as the buttons do and bring the controls up to show where it landed.
+                    Key.MediaRewind, Key.MediaFastForward -> {
+                        if (seekable && state.player.error == null) {
+                            actions.playerSeek(if (event.key == Key.MediaRewind) -30_000 else 30_000); actions.showPlayerControls(true)
+                        }
+                        true
+                    }
                     else -> false
                 }
             }.focusable()) {
@@ -153,7 +182,8 @@ fun AirloomPlayerOverlay(state: UiState, actions: UiActions, progress: StateFlow
                     LoadingIndicator(Modifier.testTag("player_buffering"), label = stringResource(R.string.ui_loading_video))
                 }
             }
-            state.player.error?.let { error ->
+            // The channel card replaces the error while it is open, so the two never share the focus.
+            state.player.error?.takeIf { !state.quickChannels }?.let { error ->
                 Column(Modifier.align(Alignment.Center).width(440.dp).clip(PanelShape)
                     .background(LocalPalette.current.panel.copy(alpha = .96f)).padding(26.dp), horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -162,6 +192,8 @@ fun AirloomPlayerOverlay(state: UiState, actions: UiActions, progress: StateFlow
                     Label("Переподключений: ${state.player.reconnectAttempts}", size = 12, color = Muted)
                     if (state.player.restartRequired) InitialFocus { TvAction("Начать заново", it, onClick = actions::playerRestart) }
                     else InitialFocus { TvAction(stringResource(R.string.ui_retry), it, onClick = actions::playerRetry) }
+                    // A dead stream is left for another channel without leaving the player.
+                    TvAction("Другой канал") { actions.showQuickChannels(true) }
                     TvAction("Настройки сети", onClick = actions::playerNetworkSettings)
                     TvAction(stringResource(R.string.ui_return_channels)) { actions.navigate(Screen.GUIDE) }
                 }
@@ -184,7 +216,13 @@ fun AirloomPlayerOverlay(state: UiState, actions: UiActions, progress: StateFlow
             AnimatedVisibility(visible = state.playerControls && state.player.request != null && state.player.error == null && !state.quickChannels,
                 enter = fadeIn(tween(motionDuration(180))) + slideInVertically(tween(motionDuration(180))) { 12 },
                 exit = fadeOut(tween(motionDuration(180))) + slideOutVertically(tween(motionDuration(180))) { 12 }) {
-                PlayerControls(state, progress, programme, actions, draftState, timelineFocusedState, playFocus, timelineFocus)
+                PlayerControls(state, progress, programme, actions, draftState, timelineFocusedState, menuState, playFocus, timelineFocus)
+            }
+            // The typed number outlives the entry by the length of its exit.
+            val number = remember { arrayOfNulls<NumberEntry>(1) }
+            state.numberEntry?.let { number[0] = it }
+            FadingPresence(state.numberEntry != null, Modifier.align(Alignment.TopEnd).padding(top = SafeVertical + 40.dp, end = SafeHorizontal), Motion.Swap) {
+                number[0]?.let { ChannelNumber(it) }
             }
             PlayerChannelsPanel(state, actions, open = state.quickChannels)
         }
@@ -194,6 +232,23 @@ fun AirloomPlayerOverlay(state: UiState, actions: UiActions, progress: StateFlow
 /** The programme after [current], once the live programme is in its last minutes. */
 private fun UiState.announcedNext(current: Programme?): Programme? =
     playingNext?.takeIf { player.request is PlaybackRequest.Live && current != null && UiPolicies.announcesNext(current.end, now) }
+
+/** The channel number typed on the remote and the channel it leads to. It never takes focus. */
+@Composable
+private fun ChannelNumber(entry: NumberEntry) {
+    Column(Modifier.testTag("player_channel_number").widthIn(min = 120.dp, max = 320.dp).clip(PanelShape).background(Color.Black.copy(alpha = .8f))
+        .padding(horizontal = 18.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Label(entry.digits, size = 30, bold = true, color = Color.White, maxLines = 1)
+        Label(entry.channelName ?: if (entry.missing) "Нет такого канала" else "Номер канала", size = 14,
+            color = Color.White.copy(alpha = if (entry.channelName != null) 1f else .72f), maxLines = 1)
+    }
+}
+
+private fun Key.digit(): Int? = when (this) {
+    Key.Zero, Key.NumPad0 -> 0; Key.One, Key.NumPad1 -> 1; Key.Two, Key.NumPad2 -> 2; Key.Three, Key.NumPad3 -> 3; Key.Four, Key.NumPad4 -> 4
+    Key.Five, Key.NumPad5 -> 5; Key.Six, Key.NumPad6 -> 6; Key.Seven, Key.NumPad7 -> 7; Key.Eight, Key.NumPad8 -> 8; Key.Nine, Key.NumPad9 -> 9
+    else -> null
+}
 
 /** Says what follows the live programme. It never takes focus: the remote keeps driving the video. */
 @Composable
@@ -213,12 +268,23 @@ private fun NextNotice(channel: tv.airloom.core.Channel?, logos: Boolean, playli
 /** Position ticks twice a second: only this panel follows them, and only while it is on screen. */
 @Composable
 private fun PlayerControls(state: UiState, progress: StateFlow<PlaybackState>?, programme: Programme?, actions: UiActions,
-                           draftState: MutableState<Long?>, timelineFocusedState: MutableState<Boolean>,
+                           draftState: MutableState<Long?>, timelineFocusedState: MutableState<Boolean>, menuState: MutableState<Boolean>,
                            playFocus: FocusRequester, timelineFocus: FocusRequester) {
     val player = progress?.collectAsStateWithLifecycle()?.value ?: state.player
     var draftPosition by draftState
     var timelineFocused by timelineFocusedState
+    var audioMenu by menuState
+    var restoreAudio by remember { mutableIntStateOf(0) }
+    val audioFocus = remember { FocusRequester() }
+    LaunchedEffect(restoreAudio) { if (restoreAudio > 0) { withFrameNanos { }; runCatching { audioFocus.requestFocus() } } }
+    DisposableEffect(Unit) { onDispose { audioMenu = false } }
     val archive = player.request is PlaybackRequest.Archive
+    // The live programme can be taken from its start when the channel keeps an archive of it. Checked once per programme, not per tick.
+    val channel = player.channel
+    val restartable = remember(channel, programme, archive) {
+        !archive && channel != null && programme != null && ProgrammeBrowserPolicy.hasArchive(channel) &&
+            CatchupResolver.resolve(PlaybackRequest.Archive(channel, programme), state.now) is CatchupResult.Available
+    }
     val connecting = player.isBuffering && !player.hasRenderedFrame
     CompositionLocalProvider(LocalUiInteractive provides (state.playerControls && !state.quickChannels && player.error == null)) {
         Box(Modifier.fillMaxSize()) {
@@ -304,18 +370,33 @@ private fun PlayerControls(state: UiState, progress: StateFlow<PlaybackState>?, 
                         }
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        // Offered only when there is a choice.
+                        if (player.audioTracks.size > 1) PlayerButton(Icons.Outlined.Audiotrack, "Звук", Modifier.focusRequester(audioFocus)) { audioMenu = true }
                         PlayerButton(Icons.Outlined.List, "Каналы", labelled = true) { actions.showQuickChannels(true) }
+                        // One slot for the way between the two: live offers the programme from its start, the archive the way back to live.
                         if (archive) PlayerButton(Icons.Outlined.LiveTv, stringResource(R.string.ui_return_live), labelled = true, onClick = actions::playerLive)
+                        else if (restartable) PlayerButton(Icons.Outlined.Replay, "С начала", labelled = true, onClick = actions::playerFromStart)
                     }
                 }
+            }
+        }
+    }
+    if (audioMenu) {
+        val close: () -> Unit = { audioMenu = false; restoreAudio++ }
+        val current = player.audioTracks.indexOfFirst { it.selected }.coerceAtLeast(0)
+        AirloomDialog("Звуковая дорожка", close) {
+            player.audioTracks.forEachIndexed { index, track ->
+                val choose: () -> Unit = { actions.playerAudio(track.id); close() }
+                if (index == current) InitialFocus { TvAction(track.label, it.fillMaxWidth().testTag("player_audio_$index"), selected = track.selected, onClick = choose) }
+                else TvAction(track.label, Modifier.fillMaxWidth().testTag("player_audio_$index"), selected = track.selected, onClick = choose)
             }
         }
     }
 }
 
 /**
- * Pill button over video. The two frequent actions always carry a label; the rest are icons that
- * open into a labelled pill while focused, so the row stays short and nothing is left unexplained.
+ * Pill button over video. The frequent actions and the way between live and the archive always carry a label;
+ * the rest are icons that open into a labelled pill while focused, so the row stays short and nothing is left unexplained.
  */
 @Composable
 private fun PlayerButton(icon: ImageVector, label: String, modifier: Modifier = Modifier, labelled: Boolean = false, onClick: () -> Unit) {

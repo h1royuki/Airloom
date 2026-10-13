@@ -18,6 +18,9 @@ import tv.airloom.playback.AirloomPlayer
 private const val EXIT_HINT = "Нажмите «Назад» ещё раз, чтобы выйти"
 private const val EXIT_BACK_WINDOW_MS = 2_000L
 private const val STARTUP_REFRESH_DELAY_MS = 45_000L
+private const val NUMBER_ENTRY_MS = 1_500L
+private const val NUMBER_MISSING_MS = 1_500L
+private const val NUMBER_DIGITS = 4
 
 @OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
 @HiltViewModel
@@ -57,6 +60,9 @@ class AirloomViewModel @Inject constructor(
     private val settingsWrites = linkedMapOf<Long, (AppSettings) -> AppSettings>()
     private val onboardingWrites = linkedMapOf<Long, (OnboardingState) -> OnboardingState>()
     private var channelRebuild: Job? = null
+    private var numberEntryJob: Job? = null
+    /** What was on, and where, when the app went to the background: «Смотреть» on the idle player continues it. */
+    private var interrupted: Pair<PlaybackRequest, Long>? = null
     /** The catalogue has answered; the first built list then ends the loading phase. */
     private var catalogueAnswered = false
     @Volatile private var operationCommitted = false
@@ -403,8 +409,9 @@ class AirloomViewModel @Inject constructor(
         finishMove(false); finishCategoryMove(false)
         if (screen == Screen.PLAYER && state.value.player.channel == null) return
         lastExitBackAtMs = 0L
-        if (screen != Screen.PLAYER && state.value.screen == Screen.PLAYER) playback.stop()
+        if (screen != Screen.PLAYER && state.value.screen == Screen.PLAYER) { playback.stop(); interrupted = null; numberEntryJob?.cancel() }
         mutableState.update { it.copy(screen = screen, quickChannels = if (screen == Screen.PLAYER) it.quickChannels else false,
+            numberEntry = if (screen == Screen.PLAYER) it.numberEntry else null,
             error = null, message = it.message.takeUnless { message -> message == EXIT_HINT }, detailChannel = null, detailProgramme = null) }
     }
     override fun back() {
@@ -553,10 +560,14 @@ class AirloomViewModel @Inject constructor(
             if (available is CatchupResult.Unavailable) { notice(available.reason); return }
         }
         previews.stop()
+        interrupted = null
+        numberEntryJob?.cancel()
         playback.configure(state.value.settings.playbackNetwork)
         playback.play(if (programme == null) PlaybackRequest.Live(channel) else PlaybackRequest.Archive(channel, programme))
         val player = playback.state.value
-        mutableState.update { it.copy(player = player, detailChannel = null, detailProgramme = null, playerControls = true, quickChannels = false, error = player.error) }
+        // The channel list follows the channel being watched, so leaving the player returns to it, not to the row it was opened from.
+        mutableState.update { it.copy(player = player, detailChannel = null, detailProgramme = null, playerControls = true, quickChannels = false, numberEntry = null, error = player.error,
+            focusedChannel = it.channels.firstOrNull { listed -> listed.id == channel.id } ?: it.focusedChannel) }
         changeSettings { it.copy(lastChannelId = channel.id, recentChannelIds = RecentChannels.opened(it.recentChannelIds, channel.id)) }
         rebuildChannels()
         fullscreen()
@@ -742,7 +753,13 @@ class AirloomViewModel @Inject constructor(
         mutableState.update { it.copy(quickChannels = show, playerControls = if (show) false else it.playerControls) }
     }
     override fun playerTogglePause() {
-        if (state.value.player.request == null) state.value.focusedChannel?.let { play(it) }
+        val resume = interrupted
+        if (state.value.player.request == null && resume != null) {
+            val (request, position) = resume
+            play(request.channel, (request as? PlaybackRequest.Archive)?.programme)
+            // The archive goes on from where it was left, when the stream can be opened at that point.
+            if (request is PlaybackRequest.Archive && position > 0 && playback.state.value.request == request) playback.seekTo(position)
+        } else if (state.value.player.request == null) state.value.focusedChannel?.let { play(it) }
         else if (state.value.player.playWhenReady || state.value.player.isPlaying) playback.pause() else playback.resume()
     }
     override fun playerRetry() {
@@ -773,13 +790,48 @@ class AirloomViewModel @Inject constructor(
     override fun nextChannel(delta: Int) {
         val channels = state.value.channels
         if (channels.isEmpty()) return
-        val current = channels.indexOfFirst { it.id == state.value.player.channel?.id }.coerceAtLeast(0)
-        play(channels[(current + delta).mod(channels.size)])
+        val current = channels.indexOfFirst { it.id == state.value.player.channel?.id }
+        // A channel opened from elsewhere is not in this list: the keys then enter the list at its ends.
+        play(channels[if (current < 0) { if (delta > 0) 0 else channels.lastIndex } else (current + delta).mod(channels.size)])
     }
+    private fun numbered(number: Int): Channel? {
+        val s = state.value
+        val hiddenGroups = s.categories.filter { it.hidden }.map { it.playlistId to it.name }.toSet()
+        return s.allChannels.firstOrNull { it.number == number && !it.hidden && (it.playlistId to it.group) !in hiddenGroups }
+    }
+    override fun channelDigit(digit: Int) {
+        val s = state.value
+        if (s.screen != Screen.PLAYER || digit !in 0..9) return
+        val digits = (s.numberEntry?.takeUnless { it.missing }?.digits.orEmpty() + digit).trimStart('0').takeLast(NUMBER_DIGITS)
+        if (digits.isEmpty()) return
+        mutableState.update { it.copy(numberEntry = NumberEntry(digits, numbered(digits.toInt())?.name)) }
+        numberEntryJob?.cancel()
+        numberEntryJob = viewModelScope.launch { delay(NUMBER_ENTRY_MS); confirmChannelNumber() }
+    }
+    override fun confirmChannelNumber() {
+        val entry = state.value.numberEntry?.takeUnless { it.missing } ?: return
+        val channel = numbered(entry.digits.toInt())
+        val waiting = numberEntryJob
+        if (channel == null) {
+            mutableState.update { it.copy(numberEntry = entry.copy(missing = true)) }
+            numberEntryJob = viewModelScope.launch { delay(NUMBER_MISSING_MS); mutableState.update { it.copy(numberEntry = null) } }
+        } else if (channel.id == state.value.player.channel?.id && state.value.player.request is PlaybackRequest.Live && state.value.player.error == null) {
+            mutableState.update { it.copy(numberEntry = null) }
+        } else play(channel)
+        waiting?.cancel()
+    }
+    override fun cancelChannelNumber() { numberEntryJob?.cancel(); mutableState.update { it.copy(numberEntry = null) } }
+    /** Playback stops, but the player stays: on return it shows the channel and continues from «Смотреть». */
     fun background() {
         previews.stop()
+        val playing = playback.state.value
+        val request = playing.request.takeIf { state.value.screen == Screen.PLAYER }
+        if (request != null) interrupted = request to playing.positionMs
         playback.stop()
-        mutableState.update { it.copy(player = playback.state.value, quickChannels = false, screen = if (it.screen == Screen.PLAYER) returningScreen else it.screen) }
+        numberEntryJob?.cancel()
+        mutableState.update { it.copy(player = playback.state.value, quickChannels = false, numberEntry = null,
+            playerControls = if (it.screen == Screen.PLAYER) true else it.playerControls,
+            focusedChannel = request?.channel ?: it.focusedChannel) }
     }
     fun showError(message: String) { mutableState.update { it.copy(error = message) } }
     private fun notice(message: String) { mutableState.update { it.copy(message = message) } }

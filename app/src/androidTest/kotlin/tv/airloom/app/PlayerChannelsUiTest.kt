@@ -39,6 +39,7 @@ class PlayerChannelsUiTest {
             "toString" -> "PlayerChannelsActions"
             "play" -> { played.set((args?.firstOrNull() as Channel).id); null }
             "showQuickChannels" -> { opened.set(args?.firstOrNull() as Boolean); null }
+            "nextChannel" -> { calls += "next:${args!![0]}"; null }
             "selectCategory" -> { calls += "select:" + ((args?.firstOrNull() as? Category)?.name ?: args?.firstOrNull()); null }
             "setFavourite", "setHidden" -> { calls += "${method.name}:${(args!![0] as Channel).id}:${args[1]}"; null }
             else -> null
@@ -81,8 +82,17 @@ class PlayerChannelsUiTest {
         other.assertExists().performSemanticsAction(SemanticsActions.RequestFocus) { it() }
         other.assertIsFocused()
         compose.onNodeWithContentDescription(liveRow).assertExists()
+        // The favourite among them carries its mark.
+        compose.onAllNodesWithContentDescription("В избранном", useUnmergedTree = true).assertCountEquals(1)
         other.performSemanticsAction(SemanticsActions.OnClick) { it() }
         compose.runOnIdle { assertEquals("news", played.get()) }
+    }
+
+    @Test fun channelKeysStepThroughTheListOverTheOpenCard() {
+        compose.setContent { AirloomPlayerOverlay(state.copy(quickChannels = true, playerControls = false), actions) }
+        awaitFocused(liveRow)
+        compose.onNodeWithContentDescription(liveRow).performKeyInput { pressKey(Key.ChannelUp); pressKey(Key.ChannelDown) }
+        compose.runOnIdle { assertEquals(listOf("next:1", "next:-1"), calls.toList()) }
     }
 
     @Test fun listFollowsTheSectionAndIgnoresTheRestOfTheCatalogue() {
@@ -243,22 +253,62 @@ class PlayerChannelsUiTest {
         compose.runOnIdle { assertEquals(false, opened.get()) }
     }
 
-    @Test fun dpadUpMovesWithinControlsWithoutOpeningSwitcher() {
+    @Test fun liveControlsOpenSwitcherWithUpAndDown() {
         compose.setContent { AirloomPlayerOverlay(state.copy(playerControls = true), actions) }
-        compose.waitUntil(2_000) { compose.onAllNodes(isFocused()).fetchSemanticsNodes().isNotEmpty() }
-        compose.onAllNodes(isFocused()).onFirst().performKeyInput { pressKey(Key.DirectionUp) }
-        compose.runOnIdle { assertNull(opened.get()) }
+        compose.waitUntil(2_000) { compose.onAllNodes(hasText("Пауза") and isFocused()).fetchSemanticsNodes().isNotEmpty() }
+        // Live has no timeline to step to: both arrows lead to the channels.
+        compose.onNodeWithText("Пауза").performKeyInput { pressKey(Key.DirectionUp) }
+        compose.runOnIdle { assertEquals(true, opened.getAndSet(null)) }
+        compose.onNodeWithText("Пауза").performKeyInput { pressKey(Key.DirectionDown) }
+        compose.runOnIdle { assertEquals(true, opened.get()) }
     }
 
-    @Test fun errorActionsKeepDpadFocusWithoutOpeningSwitcher() {
+    @Test fun archiveControlsKeepUpForTheTimelineAndOpenSwitcherPastIt() {
+        val programme = Programme("p1", "epg", live.id, "В сердце природы", now - 3_600_000, now - 1_800_000)
         compose.setContent { AirloomPlayerOverlay(state.copy(playerControls = true,
-            player = state.player.copy(error = "Поток временно недоступен")), actions) }
+            player = state.player.copy(request = PlaybackRequest.Archive(live, programme), isSeekable = true)), actions) }
+        compose.waitUntil(2_000) { compose.onAllNodes(hasText("Пауза") and isFocused()).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("Пауза").performKeyInput { pressKey(Key.DirectionUp) }
+        val timeline = compose.onNodeWithContentDescription("Позиция воспроизведения")
+        timeline.assertIsFocused()
+        compose.runOnIdle { assertNull(opened.get()) }
+        // ↓ from the timeline returns to the buttons; ↑ has nothing above it and ↓ from the buttons nothing below.
+        timeline.performKeyInput { pressKey(Key.DirectionDown) }
+        compose.onNodeWithText("Пауза").assertIsFocused()
+        compose.runOnIdle { assertNull(opened.get()) }
+        compose.onNodeWithText("Пауза").performKeyInput { pressKey(Key.DirectionUp) }
+        timeline.assertIsFocused().performKeyInput { pressKey(Key.DirectionUp) }
+        compose.runOnIdle { assertEquals(true, opened.getAndSet(null)) }
+        timeline.performKeyInput { pressKey(Key.DirectionDown) }
+        compose.onNodeWithText("Пауза").assertIsFocused().performKeyInput { pressKey(Key.DirectionDown) }
+        compose.runOnIdle { assertEquals(true, opened.get()) }
+    }
+
+    @Test fun errorActionsKeepDpadFocusAndOfferAnotherChannel() {
+        val failed = state.copy(playerControls = true, player = state.player.copy(error = "Поток временно недоступен"))
+        val current = mutableStateOf(failed)
+        compose.setContent { AirloomPlayerOverlay(current.value, actions) }
         compose.waitUntil(2_000) { compose.onNodeWithText("Повторить").fetchSemanticsNode().config.contains(SemanticsActions.RequestFocus) }
         val retry = compose.onNodeWithText("Повторить")
         retry.performSemanticsAction(SemanticsActions.RequestFocus) { it() }
+        // The arrows walk the card's own actions and open nothing by themselves.
         retry.assertIsFocused().performKeyInput { pressKey(Key.DirectionDown) }
         compose.runOnIdle { assertNull(opened.get()) }
+        val another = compose.onNodeWithText("Другой канал")
+        another.assertIsFocused().performKeyInput { pressKey(Key.DirectionDown) }
         compose.onNodeWithText("Настройки сети").assertIsFocused().performKeyInput { pressKey(Key.DirectionDown) }
         compose.onNodeWithText("К каналам").assertIsFocused()
+        another.performSemanticsAction(SemanticsActions.RequestFocus) { it() }
+        another.assertIsFocused().performKeyInput { pressKey(Key.DirectionCenter) }
+        compose.runOnIdle { assertEquals(true, opened.get()) }
+        // The channel card stands in for the error, and the failed channel's row opens it again.
+        compose.runOnIdle { current.value = failed.copy(playerControls = false, quickChannels = true) }
+        awaitFocused(liveRow)
+        compose.onNodeWithText("Повторить").assertDoesNotExist()
+        compose.onNodeWithContentDescription(liveRow).performKeyInput { pressKey(Key.DirectionCenter) }
+        compose.runOnIdle { assertEquals("live", played.get()) }
+        // Closed without a choice, the card returns with its focus.
+        compose.runOnIdle { current.value = failed.copy(playerControls = false) }
+        compose.waitUntil(2_000) { compose.onAllNodes(hasText("Повторить") and isFocused()).fetchSemanticsNodes().isNotEmpty() }
     }
 }

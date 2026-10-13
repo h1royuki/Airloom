@@ -23,6 +23,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.focus.*
 import androidx.compose.ui.input.key.*
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.semantics.semantics
@@ -40,6 +41,7 @@ internal fun ChannelProgrammePanel(channel: Channel, browser: ProgrammeBrowserSt
     playlistLocation: String?, actions: UiActions,
     restoreContentFocus: Boolean, entryFocus: FocusRequester, onContentFocus: () -> Unit, returnToChannel: () -> Unit) {
     val interactive = LocalUiInteractive.current
+    val focusManager = LocalFocusManager.current
     val today = ProgrammeBrowserPolicy.today(now)
     val date = browser.date ?: today
     val past = date < today
@@ -83,8 +85,14 @@ internal fun ChannelProgrammePanel(channel: Channel, browser: ProgrammeBrowserSt
     Box(Modifier.fillMaxSize().testTag("channel_programme_panel").onFocusChanged {
         hasFocus = it.hasFocus
         if (it.hasFocus) onContentFocus()
-    }.focusGroup().onPreviewKeyEvent {
+    }
+        // ← never leaves the stage by itself: past the date row it returns to the selected channel,
+        // not to whichever row of the list is level with the focus.
+        .focusProperties { exit = { if (it == FocusDirection.Left) FocusRequester.Cancel else FocusRequester.Default } }
+        .focusGroup().onPreviewKeyEvent {
         if (it.key == Key.DirectionLeft && it.type == KeyEventType.KeyDown && target == "programme") { returnToChannel(); true } else false
+    }.onKeyEvent {
+        if (it.key == Key.DirectionLeft && it.type == KeyEventType.KeyDown) { if (!focusManager.moveFocus(FocusDirection.Left)) returnToChannel(); true } else false
     }) {
         val current = if (past) null else rows.firstOrNull { it.start <= now && it.end > now }
         val describesCurrent = current != null && ProgrammeBrowserPolicy.same(current, selected)

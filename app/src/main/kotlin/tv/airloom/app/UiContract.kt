@@ -9,6 +9,8 @@ data class ContentLoad(val phase: LoadPhase = LoadPhase.READY, val refreshing: B
 enum class SettingsSection { CONNECTION, EPG, APPEARANCE, PLAYBACK, NETWORK, LISTS, ABOUT }
 
 enum class Screen { ONBOARDING, GUIDE, SETTINGS, SEARCH, PLAYER }
+/** A channel number being typed on the remote in the player. [missing]: the number was confirmed and no channel has it. */
+data class NumberEntry(val digits: String, val channelName: String? = null, val missing: Boolean = false)
 data class UiState(
     val loading: Boolean = true,
     val startupError: String? = null,
@@ -62,6 +64,7 @@ data class UiState(
     val playingNext: Programme? = null,
     val playerControls: Boolean = true,
     val quickChannels: Boolean = false,
+    val numberEntry: NumberEntry? = null,
     val movingChannelId: String? = null,
     val movingIds: List<String> = emptyList(),
     val movingCategory: Category? = null,
@@ -140,6 +143,9 @@ interface UiActions {
     fun playerFromStart()
     fun playerAudio(id: String)
     fun nextChannel(delta: Int)
+    fun channelDigit(digit: Int) {}
+    fun confirmChannelNumber() {}
+    fun cancelChannelNumber() {}
 }
 
 val UiState.channelSelection: ChannelSelection get() = selection ?: ChannelSelection.legacy(selectedCategory, selectedPlaylistId.orEmpty())
